@@ -39,13 +39,6 @@ class RedirectController extends Controller
             : null;
         abort_unless($contextLink, 404);
 
-        if ($this->shouldCanonicalizeBrowserNavigation($request)) {
-            $path = '/'.$contextLink->slug.'/'.ltrim($proxyPath, '/');
-            $query = $request->getQueryString();
-
-            return redirect($path.($query ? '?'.$query : ''), 307);
-        }
-
         return $this->handle($request, $contextLink, trim($proxyPath, '/'));
     }
 
@@ -194,7 +187,7 @@ class RedirectController extends Controller
                 'Last-Modified' => $upstream->header('Last-Modified'),
             ]);
             if ($upstream->redirect() && ($location = $upstream->header('Location'))) {
-                $responseHeaders['Location'] = $this->rewriteUpstreamLocation($location, $link, $targetUrl);
+                $responseHeaders['Location'] = str_starts_with($location, '/') ? '/'.$link->slug.$location : $location;
             }
 
             $response = response($body, $upstream->status(), $responseHeaders);
@@ -247,63 +240,6 @@ class RedirectController extends Controller
         return $body;
     }
 
-    private function shouldCanonicalizeBrowserNavigation(Request $request): bool
-    {
-        return $request->isMethod('GET')
-            && UserAgent::isBrowser($request->userAgent())
-            && (str_contains(strtolower((string) $request->header('Accept')), 'text/html')
-                || strtolower((string) $request->header('Sec-Fetch-Mode')) === 'navigate'
-                || strtolower((string) $request->header('Sec-Fetch-Dest')) === 'document');
-    }
-
-    private function rewriteUpstreamLocation(string $location, Link $link, string $targetUrl): string
-    {
-        $target = parse_url($targetUrl);
-        $locationParts = parse_url($location);
-        if ($target === false || $locationParts === false) {
-            return $location;
-        }
-
-        if (isset($locationParts['host']) && strcasecmp((string) $locationParts['host'], (string) ($target['host'] ?? '')) !== 0) {
-            return $location;
-        }
-
-        if (str_starts_with($location, '//')) {
-            $locationParts = parse_url(($target['scheme'] ?? 'https').':'.$location) ?: [];
-            if (strcasecmp((string) ($locationParts['host'] ?? ''), (string) ($target['host'] ?? '')) !== 0) {
-                return $location;
-            }
-        }
-
-        $path = (string) ($locationParts['path'] ?? '');
-        if ($path === '' || ! str_starts_with($path, '/')) {
-            $targetPath = (string) ($target['path'] ?? '/');
-            $directory = str_ends_with($targetPath, '/') ? $targetPath : dirname($targetPath).'/';
-            $path = $this->normalizeUrlPath($directory.$path);
-        }
-
-        return '/'.$link->slug.($path === '/' ? '' : $path)
-            .(isset($locationParts['query']) ? '?'.$locationParts['query'] : '')
-            .(isset($locationParts['fragment']) ? '#'.$locationParts['fragment'] : '');
-    }
-
-    private function normalizeUrlPath(string $path): string
-    {
-        $segments = [];
-        foreach (explode('/', $path) as $segment) {
-            if ($segment === '' || $segment === '.') {
-                continue;
-            }
-            if ($segment === '..') {
-                array_pop($segments);
-            } else {
-                $segments[] = $segment;
-            }
-        }
-
-        return '/'.implode('/', $segments);
-    }
-
     private function proxyBrowserScript(Link $link): string
     {
         $prefix = json_encode('/'.$link->slug, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
@@ -311,7 +247,7 @@ class RedirectController extends Controller
         $cookiePrefix = json_encode('ulink_up_'.$link->slug.'_', JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 
         return <<<HTML
-<script data-ulink-proxy>(function(){const p={$prefix},s={$slug},cp={$cookiePrefix};const rw=function(v){try{const u=new URL(String(v),location.href);if(u.origin===location.origin&&u.pathname!==p&&!u.pathname.startsWith(p+'/'))return p+u.pathname+u.search+u.hash}catch(e){}return v};const f=window.fetch;window.fetch=function(i,o){o=o||{};const h=new Headers(o.headers||(i instanceof Request?i.headers:{}));h.set('X-ULink-Proxy',s);o.headers=h;if(i instanceof Request)i=new Request(rw(i.url),i);else i=rw(i);return f.call(this,i,o)};const xo=XMLHttpRequest.prototype.open,xs=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.open=function(m,u){arguments[1]=rw(u);this.__ulink=true;return xo.apply(this,arguments)};XMLHttpRequest.prototype.send=function(){if(this.__ulink)this.setRequestHeader('X-ULink-Proxy',s);return xs.apply(this,arguments)};document.addEventListener('submit',function(e){const f=e.target;if(f&&f.action)f.action=rw(f.action)},true);document.addEventListener('click',function(e){const a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(a)a.href=rw(a.href)},true);['pushState','replaceState'].forEach(function(n){const h=history[n];history[n]=function(a,b,u){return h.call(this,a,b,u==null?u:rw(u))}});const wo=window.open;window.open=function(u){if(arguments.length)arguments[0]=rw(u);return wo.apply(this,arguments)};const d=Object.getOwnPropertyDescriptor(Document.prototype,'cookie');if(d&&d.get&&d.set){const en=n=>btoa(n).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');const de=n=>{try{return atob(n.replace(/-/g,'+').replace(/_/g,'/')+'==='.slice((n.length+3)%4))}catch(e){return n}};Object.defineProperty(document,'cookie',{configurable:true,get(){return d.get.call(document).split(/;\s*/).filter(c=>c.startsWith(cp)).map(c=>{const x=c.indexOf('=');return de(c.slice(cp.length,x))+c.slice(x)}).join('; ')},set(v){const x=String(v).indexOf('=');if(x<1)return;let rest=String(v).slice(x),attrs='';const semi=rest.indexOf(';');if(semi>=0){attrs=rest.slice(semi);rest=rest.slice(0,semi)}if(/;\s*path=/i.test(attrs))attrs=attrs.replace(/;\s*path=([^;]*)/i,(_,q)=>'; Path='+p+(q==='/'?'':q));else attrs+='; Path='+p;d.set.call(document,cp+en(String(v).slice(0,x))+rest+attrs)}})}})();</script>
+<script data-ulink-proxy>(function(){const p={$prefix},s={$slug},cp={$cookiePrefix};const rw=function(v){try{const u=new URL(String(v),location.href);if(u.origin===location.origin&&u.pathname!==p&&!u.pathname.startsWith(p+'/'))return p+u.pathname+u.search+u.hash}catch(e){}return v};const f=window.fetch;window.fetch=function(i,o){o=o||{};const h=new Headers(o.headers||(i instanceof Request?i.headers:{}));h.set('X-ULink-Proxy',s);o.headers=h;if(i instanceof Request)i=new Request(rw(i.url),i);else i=rw(i);return f.call(this,i,o)};const xo=XMLHttpRequest.prototype.open,xs=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.open=function(m,u){arguments[1]=rw(u);this.__ulink=true;return xo.apply(this,arguments)};XMLHttpRequest.prototype.send=function(){if(this.__ulink)this.setRequestHeader('X-ULink-Proxy',s);return xs.apply(this,arguments)};document.addEventListener('submit',function(e){const f=e.target;if(f&&f.action)f.action=rw(f.action)},true);const d=Object.getOwnPropertyDescriptor(Document.prototype,'cookie');if(d&&d.get&&d.set){const en=n=>btoa(n).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');const de=n=>{try{return atob(n.replace(/-/g,'+').replace(/_/g,'/')+'==='.slice((n.length+3)%4))}catch(e){return n}};Object.defineProperty(document,'cookie',{configurable:true,get(){return d.get.call(document).split(/;\s*/).filter(c=>c.startsWith(cp)).map(c=>{const x=c.indexOf('=');return de(c.slice(cp.length,x))+c.slice(x)}).join('; ')},set(v){const x=String(v).indexOf('=');if(x<1)return;let rest=String(v).slice(x),attrs='';const semi=rest.indexOf(';');if(semi>=0){attrs=rest.slice(semi);rest=rest.slice(0,semi)}if(/;\s*path=/i.test(attrs))attrs=attrs.replace(/;\s*path=([^;]*)/i,(_,q)=>'; Path='+p+(q==='/'?'':q));else attrs+='; Path='+p;d.set.call(document,cp+en(String(v).slice(0,x))+rest+attrs)}})}})();</script>
 HTML;
     }
 
