@@ -17,6 +17,7 @@ const adminPassword = ref('');
 const adminData = ref(null);
 const adminAuthenticated = ref(false);
 const adminLinkDetails = ref(null);
+const selectedVisitDetails = ref(null);
 const adminSection = ref('dashboard');
 const adminSidebarOpen = ref(false);
 const publicDomains = ref([]);
@@ -103,9 +104,10 @@ const deleteLink = async (link) => {
 };
 const openAdminLink = async (link) => {
   busy.value = true;
-  try { adminLinkDetails.value = await api(`/api/admin/links/${link.id}`, { headers: adminHeaders() }); }
+  try { adminLinkDetails.value = await api(`/api/admin/links/${link.id}`, { headers: adminHeaders() }); selectedVisitDetails.value = null; }
   catch (e) { error.value = e.message; } finally { busy.value = false; }
 };
+const closeAdminLink = () => { adminLinkDetails.value = null; selectedVisitDetails.value = null; };
 const addDomain = async () => {
   busy.value = true;
   try {
@@ -267,14 +269,14 @@ onMounted(() => {
       </section>
     </main>
 
-    <div v-if="adminLinkDetails" class="modal-backdrop" @click.self="adminLinkDetails = null">
+    <div v-if="adminLinkDetails" class="modal-backdrop" @click.self="closeAdminLink">
       <section class="detail-modal" role="dialog" aria-modal="true" aria-labelledby="link-detail-title">
-        <header class="detail-header"><div><span class="eyebrow">LINK DETAILS</span><h2 id="link-detail-title">{{ adminLinkDetails.public_url }}</h2></div><button class="modal-close" aria-label="Close link details" @click="adminLinkDetails = null">×</button></header>
+        <header class="detail-header"><div><span class="eyebrow">LINK DETAILS</span><h2 id="link-detail-title">{{ adminLinkDetails.public_url }}</h2></div><button class="modal-close" aria-label="Close link details" @click="closeAdminLink">×</button></header>
         <div class="detail-content">
           <div class="detail-actions"><a :href="adminLinkDetails.public_url" target="_blank" class="primary">Open public link</a><button class="secondary" @click="copy(adminLinkDetails.public_url, 'Public URL copied.')">Copy URL</button></div>
           <div class="detail-grid"><div><span>Destination</span><code>{{ adminLinkDetails.destination_url }}</code></div><div><span>Token ID</span><code>{{ adminLinkDetails.token_id }}</code></div><div><span>Delivery mode</span><strong>{{ adminLinkDetails.delivery_mode }}</strong></div><div><span>Status</span><strong :class="adminLinkDetails.expired ? 'bad' : 'good'">{{ adminLinkDetails.expired ? 'Expired' : 'Active' }}</strong></div><div><span>Created</span><strong>{{ new Date(adminLinkDetails.created_at).toLocaleString() }}</strong></div><div><span>Expires</span><strong>{{ new Date(adminLinkDetails.expire_at).toLocaleString() }}</strong></div></div>
           <div class="detail-stats"><div><span>Total hits</span><strong>{{ adminLinkDetails.hits.total }}</strong></div><div><span>Failed hits</span><strong>{{ adminLinkDetails.hits.failed }}</strong></div><div><span>Successful</span><strong>{{ adminLinkDetails.hits.total - adminLinkDetails.hits.failed }}</strong></div></div>
-          <div class="detail-visitors"><div class="table-head"><div><h3>Recent visitors</h3><p>Latest 100 requests and redirect attempts</p></div></div><div class="table-wrap"><table><thead><tr><th>IP address</th><th>Location</th><th>Browser</th><th>Device</th><th>Time</th><th>Result</th></tr></thead><tbody><tr v-for="visit in adminLinkDetails.users" :key="visit.visited_at + visit.ip"><td><code>{{ visit.ip }}</code></td><td>{{ [visit.location.city, visit.location.region, visit.location.country].filter(Boolean).join(', ') || 'Unknown' }}</td><td>{{ visit.browser }}</td><td>{{ visit.device }}</td><td>{{ new Date(visit.visited_at).toLocaleString() }}</td><td><span :class="['tag', visit.successful ? 'good-bg' : 'bad-bg']">{{ visit.successful ? 'Success' : visit.failure_reason || 'Failed' }}</span></td></tr><tr v-if="!adminLinkDetails.users.length"><td colspan="6" class="empty">No visits recorded yet.</td></tr></tbody></table></div></div>
+          <div class="detail-visitors"><div class="table-head"><div><h3>Recent visitors</h3><p>Latest 100 requests and redirect attempts</p></div></div><div v-if="selectedVisitDetails" class="request-inspector"><header><div><strong>Request information</strong><span>{{ selectedVisitDetails.request_method }} {{ selectedVisitDetails.request_path }}</span></div><button @click="selectedVisitDetails = null">×</button></header><div class="request-info-grid"><div><span>Browser</span><strong>{{ selectedVisitDetails.browser }}</strong></div><div><span>Device</span><strong>{{ selectedVisitDetails.device }}</strong></div><div><span>Operating system</span><strong>{{ selectedVisitDetails.operating_system || 'Unknown' }}</strong></div><div><span>IP address</span><code>{{ selectedVisitDetails.ip }}</code></div><div><span>Language</span><code>{{ selectedVisitDetails.accept_language || 'Not provided' }}</code></div><div><span>Referrer</span><code>{{ selectedVisitDetails.referrer || 'Not provided' }}</code></div><div class="wide"><span>Full user agent</span><code>{{ selectedVisitDetails.user_agent || 'Not provided' }}</code></div><div class="wide"><span>Accept header</span><code>{{ selectedVisitDetails.accept || 'Not provided' }}</code></div></div><div v-if="Object.keys(selectedVisitDetails.client_hints || {}).length" class="client-hints"><span v-for="(value, name) in selectedVisitDetails.client_hints" :key="name"><b>{{ name.replaceAll('_', ' ') }}</b>{{ value }}</span></div><p class="privacy-safe">Cookies, authorization headers, and request bodies are intentionally never recorded.</p></div><div class="table-wrap"><table><thead><tr><th>IP address</th><th>Location</th><th>Browser</th><th>Device / OS</th><th>Time</th><th>Result</th><th></th></tr></thead><tbody><tr v-for="visit in adminLinkDetails.users" :key="visit.visited_at + visit.ip"><td><code>{{ visit.ip }}</code></td><td>{{ [visit.location.city, visit.location.region, visit.location.country].filter(Boolean).join(', ') || 'Unknown' }}</td><td>{{ visit.browser }}</td><td>{{ visit.device }}<small>{{ visit.operating_system || 'Unknown OS' }}</small></td><td>{{ new Date(visit.visited_at).toLocaleString() }}</td><td><span :class="['tag', visit.successful ? 'good-bg' : 'bad-bg']">{{ visit.successful ? 'Success' : visit.failure_reason || 'Failed' }}</span></td><td><button class="secondary inspect-button" @click="selectedVisitDetails = visit">Inspect</button></td></tr><tr v-if="!adminLinkDetails.users.length"><td colspan="7" class="empty">No visits recorded yet.</td></tr></tbody></table></div></div>
         </div>
       </section>
     </div>

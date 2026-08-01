@@ -4,6 +4,15 @@ namespace App\Support;
 
 class UserAgent
 {
+    public static function isBrowser(?string $ua): bool
+    {
+        $ua ??= '';
+
+        return str_contains($ua, 'Mozilla/5.0')
+            && preg_match('/(?:Chrome|CriOS|Firefox|FxiOS|Safari|Edg|OPR)\//i', $ua) === 1
+            && preg_match('/bot|crawler|spider|curl|wget|postman|insomnia/i', $ua) !== 1;
+    }
+
     public static function parse(?string $ua): array
     {
         $ua ??= '';
@@ -22,7 +31,17 @@ class UserAgent
             $ua === '' => 'Unknown',
             default => 'Desktop',
         };
+        $operatingSystem = match (true) {
+            preg_match('/iPhone|iPad|iPod/i', $ua) === 1 => 'iOS / iPadOS',
+            str_contains($ua, 'Android') => 'Android',
+            str_contains($ua, 'Windows NT') => 'Windows',
+            str_contains($ua, 'CrOS') => 'ChromeOS',
+            str_contains($ua, 'Mac OS X') || str_contains($ua, 'Macintosh') => 'macOS',
+            str_contains($ua, 'Linux') => 'Linux',
+            $ua === '' => 'Unknown',
+            default => 'Other',
+        };
 
-        return [$browser, $device];
+        return [$browser, $device, $operatingSystem];
     }
 }

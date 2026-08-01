@@ -89,6 +89,7 @@ class RedirectController extends Controller
         return $proxyPath === null
             && $request->isMethod('GET')
             && str_contains(strtolower((string) $request->header('Accept')), 'text/html')
+            && UserAgent::isBrowser($request->userAgent())
             && ! $this->validCautionContinue($request, $link)
             && ! $request->cookie($this->consentCookie($link))
             && ! $request->header('X-ULink-No-Screen');
@@ -330,7 +331,7 @@ HTML;
 
     private function recordVisit(Link $link, Request $request, bool $successful, ?string $reason = null): void
     {
-        [$browser, $device] = UserAgent::parse($request->userAgent());
+        [$browser, $device, $operatingSystem] = UserAgent::parse($request->userAgent());
         $link->visits()->create([
             'ip_address' => filter_var($request->header('CF-Connecting-IP'), FILTER_VALIDATE_IP) ? $request->header('CF-Connecting-IP') : $request->ip(),
             'country' => $request->header('CF-IPCountry'),
@@ -338,6 +339,24 @@ HTML;
             'city' => $request->header('CF-IPCity'),
             'browser' => $browser,
             'device' => $device,
+            'user_agent' => $request->userAgent(),
+            'operating_system' => $operatingSystem,
+            'request_method' => $request->method(),
+            'request_path' => '/'.$request->path(),
+            'referrer' => $this->safeReferrer($request->header('Referer')),
+            'accept_language' => $request->header('Accept-Language'),
+            'accept_header' => $request->header('Accept'),
+            'client_hints' => array_filter([
+                'sec_ch_ua' => $request->header('Sec-CH-UA'),
+                'sec_ch_ua_mobile' => $request->header('Sec-CH-UA-Mobile'),
+                'sec_ch_ua_platform' => $request->header('Sec-CH-UA-Platform'),
+                'sec_fetch_site' => $request->header('Sec-Fetch-Site'),
+                'sec_fetch_mode' => $request->header('Sec-Fetch-Mode'),
+                'sec_fetch_dest' => $request->header('Sec-Fetch-Dest'),
+                'dnt' => $request->header('DNT'),
+                'viewport_width' => $request->header('Viewport-Width'),
+                'device_memory' => $request->header('Device-Memory'),
+            ]),
             'successful' => $successful,
             'failure_reason' => $reason,
             'created_at' => now(),
@@ -349,6 +368,20 @@ HTML;
         $path = parse_url((string) $request->header('Referer'), PHP_URL_PATH);
 
         return $path ? explode('/', trim($path, '/'))[0] ?? null : null;
+    }
+
+    private function safeReferrer(?string $referrer): ?string
+    {
+        if (! $referrer) {
+            return null;
+        }
+
+        $parts = parse_url($referrer);
+        if (! $parts || empty($parts['host'])) {
+            return null;
+        }
+
+        return ($parts['scheme'] ?? 'https').'://'.$parts['host'].($parts['path'] ?? '/');
     }
 
     private function consentCookie(Link $link): string

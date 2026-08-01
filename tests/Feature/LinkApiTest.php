@@ -52,7 +52,7 @@ class LinkApiTest extends TestCase
         $this->withHeaders([
             'CF-Connecting-IP' => '203.0.113.8',
             'CF-IPCountry' => 'BD',
-            'User-Agent' => 'Mozilla/5.0 Chrome/126.0 Mobile',
+            'User-Agent' => 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126.0.0.0 Mobile Safari/537.36',
             'X-ULink-No-Screen' => 'test',
         ])->get('/'.$link->slug)->assertRedirect('https://example.com/current');
 
@@ -62,6 +62,9 @@ class LinkApiTest extends TestCase
             'country' => 'BD',
             'browser' => 'Chrome',
             'device' => 'Mobile',
+            'operating_system' => 'Android',
+            'request_method' => 'GET',
+            'request_path' => '/abcdefghij',
             'successful' => true,
         ]);
     }
@@ -107,6 +110,14 @@ class LinkApiTest extends TestCase
             'ip_address' => '203.0.113.10',
             'browser' => 'Chrome',
             'device' => 'Desktop',
+            'operating_system' => 'Linux',
+            'user_agent' => 'Mozilla/5.0 test browser',
+            'request_method' => 'GET',
+            'request_path' => '/detail1234',
+            'referrer' => 'https://example.net/source',
+            'accept_language' => 'en-US,en;q=0.9',
+            'accept_header' => 'text/html',
+            'client_hints' => ['sec_ch_ua_platform' => 'Linux'],
             'successful' => true,
             'created_at' => now(),
         ]);
@@ -118,6 +129,9 @@ class LinkApiTest extends TestCase
             ->assertJsonPath('delivery_mode', 'redirect')
             ->assertJsonPath('hits.total', 1)
             ->assertJsonPath('users.0.ip', '203.0.113.10')
+            ->assertJsonPath('users.0.operating_system', 'Linux')
+            ->assertJsonPath('users.0.request_path', '/detail1234')
+            ->assertJsonPath('users.0.client_hints.sec_ch_ua_platform', 'Linux')
             ->assertJsonMissing(['secret_hash'])
             ->assertJsonMissing(['secret_key']);
     }
@@ -224,7 +238,8 @@ class LinkApiTest extends TestCase
             'expires_at' => now()->addDay(),
         ]);
 
-        $warning = $this->withHeader('Accept', 'text/html')->get('/'.$link->slug)
+        $browserUa = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36';
+        $warning = $this->withHeaders(['Accept' => 'text/html', 'User-Agent' => $browserUa])->get('/'.$link->slug)
             ->assertOk()
             ->assertSee('Make sure you trust this website')
             ->assertSee('93.184.216.34');
@@ -233,10 +248,28 @@ class LinkApiTest extends TestCase
 
         $nonce = $warning->getCookie('ulink_caution_'.$link->slug)->getValue();
         $this->withCookie('ulink_caution_'.$link->slug, $nonce)
-            ->withHeader('Accept', 'text/html')
+            ->withHeaders(['Accept' => 'text/html', 'User-Agent' => $browserUa])
             ->get('/'.$link->slug.'?__ulink_continue='.$nonce)
             ->assertRedirect('http://93.184.216.34/site')
             ->assertCookie('ulink_trust_'.$link->slug, '1');
+    }
+
+    public function test_curl_and_custom_user_agents_never_see_the_browser_caution(): void
+    {
+        $link = Link::create([
+            'token_id' => 'non-browser-token',
+            'secret_hash' => LinkCredentials::hash('secret'),
+            'slug' => 'agentx1234',
+            'destination_url' => 'http://93.184.216.34/api',
+            'delivery_mode' => 'redirect',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        foreach (['curl/8.10.1', 'MyCustomIntegration/2.0'] as $userAgent) {
+            $this->withHeaders(['Accept' => 'text/html', 'User-Agent' => $userAgent])
+                ->get('/'.$link->slug)
+                ->assertRedirect('http://93.184.216.34/api');
+        }
     }
 
     public function test_root_relative_post_is_routed_to_referring_proxy(): void
