@@ -1,0 +1,3 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link expired — ULink</title>
+<style>body{margin:0;background:#0b1020;color:#eef2ff;font-family:system-ui;display:grid;place-items:center;min-height:100vh}.box{max-width:520px;padding:48px;text-align:center;background:#141b30;border:1px solid #29334f;border-radius:24px}h1{font-size:2.4rem;margin:.2em}p{color:#aab5d1;line-height:1.6}a{color:#8be9d0}</style></head>
+<body><main class="box"><div>ULINK</div><h1>This link has expired</h1><p>The owner can no longer update or use this address. Create a new persistent link to keep your next tunnel URL reachable.</p><a href="/">Create a ULink</a></main></body></html>
