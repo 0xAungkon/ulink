@@ -37,6 +37,7 @@ Set secure admin credentials before exposing the service:
 APP_URL=https://links.example.com
 ULINK_ADMIN_USERNAME=your-admin-name
 ULINK_ADMIN_PASSWORD=a-long-random-password
+ULINK_ADMIN_PATH=a-long-random-private-path
 ```
 
 Every custom public domain or subdomain must point to this Laravel deployment in DNS (and be covered by HTTPS). Adding it in the admin panel controls ULink generation; it does not create the DNS record automatically.
@@ -48,7 +49,7 @@ For MySQL/PostgreSQL, update the standard `DB_*` variables in `.env`. In product
 ### Create
 
 ```http
-POST /api/links
+POST /ulink/api/v1/links
 Content-Type: application/json
 
 {
@@ -66,12 +67,12 @@ Recognized browsers see a one-time safety notice for each individual link before
 
 The administrator link-detail view exposes the safe request metadata actually provided by the client: IP/location headers, full user agent, detected browser/device/OS, request method and path, query-free referrer, language and Accept headers, and available browser client hints. Cookies, authorization headers, query strings, and request bodies are deliberately excluded from analytics.
 
-`domain_id` may be supplied to choose one of the active entries returned by `GET /api/domains`. If the administrator has not configured any domains yet, the API and creation form use the main `APP_URL` domain. A link snapshots its selected base URL so later domain configuration changes do not alter existing addresses.
+`domain_id` may be supplied to choose one of the active entries returned by `GET /ulink/api/v1/domains`. If the administrator has not configured any domains yet, the API and creation form use the main `APP_URL` domain. A link snapshots its selected base URL so later domain configuration changes do not alter existing addresses.
 
 ### Update
 
 ```http
-PUT /api/links
+PUT /ulink/api/v1/links
 Content-Type: application/json
 
 {
@@ -86,27 +87,27 @@ The misspelled `secreat_key` is also accepted for compatibility with the origina
 ### Inspect analytics
 
 ```http
-GET /api/links/{token_id}
+GET /ulink/api/v1/links/{token_id}
 Authorization: Bearer {token_id}:{secret_key}
 ```
 
-`POST /api/links/info` is also supported with `token_id` and `secret_key` in the JSON body. The same credential may be supplied through an `ulink_token` cookie or `X-Link-Token` header.
+`POST /ulink/api/v1/links/info` is also supported with `token_id` and `secret_key` in the JSON body. The same credential may be supplied through an `ulink_token` cookie or `X-Link-Token` header.
 
 ### Admin
 
 Admin endpoints use HTTP Basic authentication with the `.env` credentials:
 
-- `POST /api/admin/login`
-- `GET /api/admin/dashboard`
-- `GET /api/admin/links/{id}`
-- `DELETE /api/admin/links/{id}`
-- `POST /api/admin/domains`
-- `PATCH /api/admin/domains/{id}`
-- `DELETE /api/admin/domains/{id}`
+- `POST /ulink/api/v1/admin/login`
+- `GET /ulink/api/v1/admin/dashboard`
+- `GET /ulink/api/v1/admin/links/{id}`
+- `DELETE /ulink/api/v1/admin/links/{id}`
+- `POST /ulink/api/v1/admin/domains`
+- `PATCH /ulink/api/v1/admin/domains/{id}`
+- `DELETE /ulink/api/v1/admin/domains/{id}`
 
-The browser admin UI is available at `/admin`.
+The browser admin UI is available at the private path configured by `ULINK_ADMIN_PATH`. The conventional `/admin` route is not registered unless it is explicitly selected.
 
-Admin workspaces have dedicated browser routes: `/admin/dashboard`, `/admin/links`, `/admin/link/{id}`, and `/admin/domains`. Invalid administrator credentials return an in-form JSON error without sending an HTTP Basic challenge that would trigger a native browser login dialog.
+For example, with `ULINK_ADMIN_PATH=a-long-random-private-path`, workspaces use `/a-long-random-private-path/dashboard`, `/a-long-random-private-path/links`, `/a-long-random-private-path/link/{id}`, and `/a-long-random-private-path/domains`. Invalid administrator credentials return an in-form JSON error without sending an HTTP Basic challenge that would trigger a native browser login dialog.
 
 ## Testing
 

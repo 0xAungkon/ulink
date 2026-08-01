@@ -1,7 +1,17 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 
-const page = ref(location.pathname.startsWith('/admin') ? 'admin' : location.pathname === '/manage' ? 'manage' : 'home');
+const adminBasePath = (window.ULINK_CONFIG?.adminPath || '/admin').replace(/\/+$/, '');
+const apiBasePath = '/ulink/api/v1';
+const isAdminPath = (path = location.pathname) => path === adminBasePath || path.startsWith(`${adminBasePath}/`);
+const adminLinkIdFromPath = (path = location.pathname) => {
+  const prefix = `${adminBasePath}/link/`;
+  const value = path.startsWith(prefix) ? path.slice(prefix.length) : '';
+  return /^\d+$/.test(value) ? value : null;
+};
+const adminSectionFromPath = (path = location.pathname) => path === `${adminBasePath}/domains` ? 'domains' : adminLinkIdFromPath(path) ? 'link-detail' : path === `${adminBasePath}/links` ? 'links' : 'dashboard';
+
+const page = ref(isAdminPath() ? 'admin' : location.pathname === '/manage' ? 'manage' : 'home');
 const busy = ref(false);
 const error = ref('');
 const notice = ref('');
@@ -18,7 +28,7 @@ const adminData = ref(null);
 const adminAuthenticated = ref(false);
 const adminLinkDetails = ref(null);
 const selectedVisitDetails = ref(null);
-const adminSection = ref(location.pathname === '/admin/domains' ? 'domains' : location.pathname.startsWith('/admin/link/') ? 'link-detail' : location.pathname === '/admin/links' ? 'links' : 'dashboard');
+const adminSection = ref(adminSectionFromPath());
 const adminSidebarOpen = ref(false);
 const publicDomains = ref([]);
 const selectedDomainId = ref(null);
@@ -49,7 +59,7 @@ const api = async (url, options = {}) => {
 const createLink = async () => {
   busy.value = true;
   try {
-    created.value = await api('/api/links', { method: 'POST', body: JSON.stringify({ url: destination.value, expire_at: new Date(`${expiry.value}T23:59:59`).toISOString(), type: deliveryMode.value, domain_id: selectedDomainId.value }) });
+    created.value = await api(`${apiBasePath}/links`, { method: 'POST', body: JSON.stringify({ url: destination.value, expire_at: new Date(`${expiry.value}T23:59:59`).toISOString(), type: deliveryMode.value, domain_id: selectedDomainId.value }) });
     tokenId.value = created.value.token_id; secretKey.value = created.value.secret_key;
     localStorage.setItem('ulink_credentials', JSON.stringify({ token_id: tokenId.value, secret_key: secretKey.value }));
   } catch (e) { error.value = e.message; } finally { busy.value = false; }
@@ -58,7 +68,7 @@ const createLink = async () => {
 const inspect = async () => {
   busy.value = true;
   try {
-    details.value = await api(`/api/links/${encodeURIComponent(tokenId.value)}`, { headers: { Authorization: `Bearer ${tokenId.value}:${secretKey.value}` } });
+    details.value = await api(`${apiBasePath}/links/${encodeURIComponent(tokenId.value)}`, { headers: { Authorization: `Bearer ${tokenId.value}:${secretKey.value}` } });
     newDestination.value = details.value.destination_url;
     localStorage.setItem('ulink_credentials', JSON.stringify({ token_id: tokenId.value, secret_key: secretKey.value }));
   } catch (e) { error.value = e.message; details.value = null; } finally { busy.value = false; }
@@ -67,7 +77,7 @@ const inspect = async () => {
 const updateLink = async () => {
   busy.value = true;
   try {
-    const result = await api('/api/links', { method: 'PUT', body: JSON.stringify({ token_id: tokenId.value, secret_key: secretKey.value, url: newDestination.value }) });
+    const result = await api(`${apiBasePath}/links`, { method: 'PUT', body: JSON.stringify({ token_id: tokenId.value, secret_key: secretKey.value, url: newDestination.value }) });
     details.value.destination_url = result.destination_url; notice.value = 'Destination updated. Your public URL stayed the same.';
   } catch (e) { error.value = e.message; } finally { busy.value = false; }
 };
@@ -84,7 +94,7 @@ const go = (next) => {
 const adminHeaders = () => ({ Authorization: `Basic ${btoa(`${adminUser.value}:${adminPassword.value}`)}` });
 const loadDomains = async () => {
   try {
-    publicDomains.value = await api('/api/domains');
+    publicDomains.value = await api(`${apiBasePath}/domains`);
     const preferred = publicDomains.value.find(domain => domain.is_default) || publicDomains.value[0];
     selectedDomainId.value = preferred?.id ?? null;
   } catch (e) { error.value = e.message; }
@@ -92,24 +102,24 @@ const loadDomains = async () => {
 const loadAdmin = async () => {
   busy.value = true;
   try {
-    adminData.value = await api('/api/admin/dashboard', { headers: adminHeaders() });
+    adminData.value = await api(`${apiBasePath}/admin/dashboard`, { headers: adminHeaders() });
     adminAuthenticated.value = true;
     sessionStorage.setItem('ulink_admin', JSON.stringify({ user: adminUser.value, password: adminPassword.value }));
-    if (location.pathname === '/admin') history.replaceState({}, '', '/admin/dashboard');
-    const routeLinkId = location.pathname.match(/^\/admin\/link\/(\d+)$/)?.[1];
+    if (location.pathname === adminBasePath) history.replaceState({}, '', `${adminBasePath}/dashboard`);
+    const routeLinkId = adminLinkIdFromPath();
     if (routeLinkId) await openAdminLink({ id: routeLinkId }, false);
   } catch (e) { error.value = e.message; adminAuthenticated.value = false; } finally { busy.value = false; }
 };
 const deleteLink = async (link) => {
   if (!confirm(`Permanently delete ${link.public_url}?`)) return;
-  try { await api(`/api/admin/links/${link.id}`, { method: 'DELETE', headers: adminHeaders() }); await loadAdmin(); notice.value = 'Link deleted.'; }
+  try { await api(`${apiBasePath}/admin/links/${link.id}`, { method: 'DELETE', headers: adminHeaders() }); await loadAdmin(); notice.value = 'Link deleted.'; }
   catch (e) { error.value = e.message; }
 };
 const openAdminLink = async (link, updateRoute = true) => {
   busy.value = true;
   try {
-    adminLinkDetails.value = await api(`/api/admin/links/${link.id}`, { headers: adminHeaders() }); selectedVisitDetails.value = null; adminSection.value = 'link-detail';
-    if (updateRoute) history.pushState({}, '', `/admin/link/${link.id}`);
+    adminLinkDetails.value = await api(`${apiBasePath}/admin/links/${link.id}`, { headers: adminHeaders() }); selectedVisitDetails.value = null; adminSection.value = 'link-detail';
+    if (updateRoute) history.pushState({}, '', `${adminBasePath}/link/${link.id}`);
   }
   catch (e) { error.value = e.message; } finally { busy.value = false; }
 };
@@ -117,21 +127,21 @@ const closeAdminLink = () => { adminLinkDetails.value = null; selectedVisitDetai
 const addDomain = async () => {
   busy.value = true;
   try {
-    await api('/api/admin/domains', { method: 'POST', headers: adminHeaders(), body: JSON.stringify({ label: newDomainLabel.value || null, base_url: newDomainUrl.value }) });
+    await api(`${apiBasePath}/admin/domains`, { method: 'POST', headers: adminHeaders(), body: JSON.stringify({ label: newDomainLabel.value || null, base_url: newDomainUrl.value }) });
     newDomainLabel.value = ''; newDomainUrl.value = '';
     await loadAdmin(); await loadDomains(); notice.value = 'Public domain added.';
   } catch (e) { error.value = e.message; } finally { busy.value = false; }
 };
 const updateDomain = async (domain, changes) => {
   try {
-    await api(`/api/admin/domains/${domain.id}`, { method: 'PATCH', headers: adminHeaders(), body: JSON.stringify(changes) });
+    await api(`${apiBasePath}/admin/domains/${domain.id}`, { method: 'PATCH', headers: adminHeaders(), body: JSON.stringify(changes) });
     await loadAdmin(); await loadDomains(); notice.value = 'Domain configuration updated.';
   } catch (e) { error.value = e.message; }
 };
 const deleteDomain = async (domain) => {
   if (!confirm(`Remove ${domain.base_url} from new-link choices? Existing links will keep using it.`)) return;
   try {
-    await api(`/api/admin/domains/${domain.id}`, { method: 'DELETE', headers: adminHeaders() });
+    await api(`${apiBasePath}/admin/domains/${domain.id}`, { method: 'DELETE', headers: adminHeaders() });
     await loadAdmin(); await loadDomains(); notice.value = 'Domain removed. Existing links were not changed.';
   } catch (e) { error.value = e.message; }
 };
@@ -162,16 +172,16 @@ const adminSectionMeta = computed(() => ({
 const selectAdminSection = (section, updateRoute = true) => {
   adminSection.value = section; adminSidebarOpen.value = false;
   if (section !== 'link-detail') adminLinkDetails.value = null;
-  if (updateRoute) history.pushState({}, '', `/admin/${section}`);
+  if (updateRoute) history.pushState({}, '', `${adminBasePath}/${section}`);
 };
 
 const syncRoute = () => {
-  page.value = location.pathname.startsWith('/admin') ? 'admin' : location.pathname === '/manage' ? 'manage' : 'home';
+  page.value = isAdminPath() ? 'admin' : location.pathname === '/manage' ? 'manage' : 'home';
   if (page.value !== 'admin') return;
-  const linkId = location.pathname.match(/^\/admin\/link\/(\d+)$/)?.[1];
+  const linkId = adminLinkIdFromPath();
   if (linkId) { adminSection.value = 'link-detail'; if (adminAuthenticated.value) openAdminLink({ id: linkId }, false); return; }
   adminLinkDetails.value = null;
-  adminSection.value = location.pathname === '/admin/domains' ? 'domains' : location.pathname === '/admin/links' ? 'links' : 'dashboard';
+  adminSection.value = adminSectionFromPath();
 };
 
 const expiryLabel = computed(() => created.value ? new Date(created.value.expire_at).toLocaleDateString(undefined, { dateStyle: 'long' }) : '');

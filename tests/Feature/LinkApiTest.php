@@ -14,9 +14,11 @@ class LinkApiTest extends TestCase
 {
     use RefreshDatabase;
 
+    private string $apiBase = '/ulink/api/v1';
+
     public function test_anonymous_link_can_be_created_updated_and_inspected(): void
     {
-        $created = $this->postJson('/api/links', [
+        $created = $this->postJson($this->apiBase.'/links', [
             'url' => 'https://first.trycloudflare.com/path',
             'expire_at' => now()->addMonth()->toIso8601String(),
             'type' => 'anonymous',
@@ -26,13 +28,13 @@ class LinkApiTest extends TestCase
         $this->assertNotSame($created['secret_key'], $link->secret_hash);
         $publicUrl = $created['url'];
 
-        $this->putJson('/api/links', [
+        $this->putJson($this->apiBase.'/links', [
             'token_id' => $created['token_id'],
             'secret_key' => $created['secret_key'],
             'url' => 'https://second.trycloudflare.com',
         ])->assertOk()->assertJsonPath('url', $publicUrl);
 
-        $this->getJson('/api/links/'.$created['token_id'], [
+        $this->getJson($this->apiBase.'/links/'.$created['token_id'], [
             'Authorization' => 'Bearer '.$created['token_id'].':'.$created['secret_key'],
         ])->assertOk()
             ->assertJsonPath('destination_url', 'https://second.trycloudflare.com')
@@ -79,7 +81,7 @@ class LinkApiTest extends TestCase
             'expires_at' => now()->addDay(),
         ]);
 
-        $this->getJson('/api/links/private-token', [
+        $this->getJson($this->apiBase.'/links/private-token', [
             'Authorization' => 'Bearer private-token:wrong',
         ])->assertUnauthorized();
     }
@@ -88,22 +90,33 @@ class LinkApiTest extends TestCase
     {
         config(['ulink.admin_username' => 'operator', 'ulink.admin_password' => 'safe-password']);
 
-        $this->getJson('/api/admin/dashboard')
+        $this->getJson($this->apiBase.'/admin/dashboard')
             ->assertUnauthorized()
             ->assertHeaderMissing('WWW-Authenticate')
             ->assertJsonPath('message', 'Invalid administrator credentials.');
         $this->withBasicAuth('operator', 'safe-password')
-            ->getJson('/api/admin/dashboard')
+            ->getJson($this->apiBase.'/admin/dashboard')
             ->assertOk()
             ->assertJsonStructure(['stats', 'links']);
     }
 
     public function test_admin_portal_sections_have_dedicated_routes(): void
     {
-        $this->get('/admin/dashboard')->assertOk();
-        $this->get('/admin/links')->assertOk();
-        $this->get('/admin/link/123')->assertOk();
-        $this->get('/admin/domains')->assertOk();
+        $adminPath = '/'.trim((string) config('ulink.admin_path'), '/');
+        $this->get($adminPath.'/dashboard')->assertOk();
+        $this->get($adminPath.'/links')->assertOk();
+        $this->get($adminPath.'/link/123')->assertOk();
+        $this->get($adminPath.'/domains')->assertOk();
+
+        if ($adminPath !== '/admin') {
+            $this->get('/admin')->assertNotFound();
+        }
+    }
+
+    public function test_application_api_uses_versioned_ulink_prefix(): void
+    {
+        $this->getJson($this->apiBase.'/domains')->assertOk();
+        $this->getJson('/api/domains')->assertNotFound();
     }
 
     public function test_admin_can_view_complete_link_details_without_link_secret(): void
@@ -134,7 +147,7 @@ class LinkApiTest extends TestCase
         ]);
 
         $this->withBasicAuth('operator', 'safe-password')
-            ->getJson('/api/admin/links/'.$link->id)
+            ->getJson($this->apiBase.'/admin/links/'.$link->id)
             ->assertOk()
             ->assertJsonPath('token_id', 'admin-visible-token')
             ->assertJsonPath('delivery_mode', 'redirect')
@@ -151,36 +164,36 @@ class LinkApiTest extends TestCase
     {
         config(['ulink.admin_username' => 'operator', 'ulink.admin_password' => 'safe-password']);
 
-        $this->getJson('/api/domains')
+        $this->getJson($this->apiBase.'/domains')
             ->assertOk()
             ->assertJsonPath('0.base_url', 'http://localhost')
             ->assertJsonPath('0.label', 'Main domain')
             ->assertJsonPath('0.is_default', true);
 
         $domain = $this->withBasicAuth('operator', 'safe-password')
-            ->postJson('/api/admin/domains', [
+            ->postJson($this->apiBase.'/admin/domains', [
                 'label' => 'Short links',
                 'base_url' => 'go.example.com',
             ])->assertCreated()
             ->assertJsonPath('base_url', 'https://go.example.com')
             ->json();
 
-        $this->getJson('/api/domains')
+        $this->getJson($this->apiBase.'/domains')
             ->assertOk()
             ->assertJsonPath('0.label', 'Main domain')
             ->assertJsonPath('0.is_default', true);
 
         $this->withBasicAuth('operator', 'safe-password')
-            ->patchJson('/api/admin/domains/'.$domain['id'], ['is_default' => true])
+            ->patchJson($this->apiBase.'/admin/domains/'.$domain['id'], ['is_default' => true])
             ->assertOk()
             ->assertJsonPath('is_default', true);
 
-        $this->getJson('/api/domains')
+        $this->getJson($this->apiBase.'/domains')
             ->assertOk()
             ->assertJsonPath('0.label', 'Short links')
             ->assertJsonPath('0.is_default', true);
 
-        $created = $this->postJson('/api/links', [
+        $created = $this->postJson($this->apiBase.'/links', [
             'url' => 'https://tunnel.trycloudflare.com',
             'expire_at' => now()->addMonth()->toIso8601String(),
             'domain_id' => $domain['id'],
