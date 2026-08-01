@@ -289,9 +289,10 @@ onMounted(() => {
       </section>
     </main>
 
-    <div v-if="adminLinkDetails" class="modal-backdrop" @click.self="closeAdminLink">
-      <section class="detail-modal" role="dialog" aria-modal="true" aria-labelledby="link-detail-title">
-        <header class="detail-header"><div><span class="eyebrow">LINK DETAILS</span><h2 id="link-detail-title">{{ adminLinkDetails.public_url }}</h2></div><button class="modal-close" aria-label="Close link details" @click="closeAdminLink">×</button></header>
+    <div v-if="adminAuthenticated && adminSection === 'link-detail' && !adminLinkDetails" class="admin-detail-route"><div class="detail-page-loading">Loading link details…</div></div>
+    <div v-if="adminLinkDetails && adminSection === 'link-detail'" class="admin-detail-route">
+      <section class="admin-detail-page" role="region" aria-labelledby="link-detail-title">
+        <header class="detail-header"><div><span class="eyebrow">LINK DETAILS</span><h2 id="link-detail-title">{{ adminLinkDetails.public_url }}</h2></div><button class="secondary back-to-links" @click="closeAdminLink">← Back to links</button></header>
         <div class="detail-content">
           <div class="detail-actions"><a :href="adminLinkDetails.public_url" target="_blank" class="primary">Open public link</a><button class="secondary" @click="copy(adminLinkDetails.public_url, 'Public URL copied.')">Copy URL</button></div>
           <div class="detail-grid"><div><span>Destination</span><code>{{ adminLinkDetails.destination_url }}</code></div><div><span>Token ID</span><code>{{ adminLinkDetails.token_id }}</code></div><div><span>Delivery mode</span><strong>{{ adminLinkDetails.delivery_mode }}</strong></div><div><span>Status</span><strong :class="adminLinkDetails.expired ? 'bad' : 'good'">{{ adminLinkDetails.expired ? 'Expired' : 'Active' }}</strong></div><div><span>Created</span><strong>{{ new Date(adminLinkDetails.created_at).toLocaleString() }}</strong></div><div><span>Expires</span><strong>{{ new Date(adminLinkDetails.expire_at).toLocaleString() }}</strong></div></div>
