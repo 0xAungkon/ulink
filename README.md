@@ -5,6 +5,7 @@ ULink gives changing Cloudflare Tunnel URLs one stable public address. Anonymous
 ## Features
 
 - Anonymous links with a maximum one-year lifetime
+- Redirect and server-side proxy delivery modes
 - Stable, random 10-character public URL
 - Secret keys stored as keyed one-way hashes
 - Destination updates without changing the public URL
@@ -59,6 +60,8 @@ Content-Type: application/json
 
 The response includes `token_id`, `secret_key`, `expire_at`, and the stable `url`. The plaintext secret cannot be recovered later.
 
+Set `type` to `redirect` (the default) to send visitors to the current destination, or `proxy` to fetch upstream responses through ULink while keeping the public URL in the browser. Proxy mode rewrites common relative HTML/CSS asset paths, does not forward cookies or authorization headers, and blocks localhost, private, reserved, and configured ULink hosts to reduce SSRF risk. Highly dynamic applications that build absolute URLs in JavaScript may still require upstream proxy-awareness.
+
 `domain_id` may be supplied to choose one of the active entries returned by `GET /api/domains`. If the administrator has not configured any domains yet, the API and creation form use the main `APP_URL` domain. A link snapshots its selected base URL so later domain configuration changes do not alter existing addresses.
 
 ### Update
@@ -91,6 +94,7 @@ Admin endpoints use HTTP Basic authentication with the `.env` credentials:
 
 - `POST /api/admin/login`
 - `GET /api/admin/dashboard`
+- `GET /api/admin/links/{id}`
 - `DELETE /api/admin/links/{id}`
 - `POST /api/admin/domains`
 - `PATCH /api/admin/domains/{id}`

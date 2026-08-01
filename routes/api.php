@@ -13,6 +13,7 @@ Route::post('/links/info', [LinkController::class, 'show'])->middleware('throttl
 Route::prefix('admin')->middleware(['admin.env', 'throttle:60,1'])->group(function () {
     Route::post('/login', [AdminController::class, 'login']);
     Route::get('/dashboard', [AdminController::class, 'dashboard']);
+    Route::get('/links/{link}', [AdminController::class, 'showLink']);
     Route::delete('/links/{link}', [AdminController::class, 'destroy']);
     Route::post('/domains', [AdminController::class, 'storeDomain']);
     Route::patch('/domains/{domain}', [AdminController::class, 'updateDomain']);

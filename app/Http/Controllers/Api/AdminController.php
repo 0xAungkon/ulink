@@ -41,6 +41,7 @@ class AdminController extends Controller
                 'token_id' => $link->token_id,
                 'public_url' => $link->publicUrl(),
                 'destination_url' => $link->destination_url,
+                'delivery_mode' => $link->delivery_mode,
                 'total_hits' => $link->total_hits,
                 'failed_hits' => $link->failed_hits,
                 'expire_at' => $link->expires_at->toIso8601String(),
@@ -55,6 +56,40 @@ class AdminController extends Controller
         $link->delete();
 
         return response()->json(['deleted' => true]);
+    }
+
+    public function showLink(Link $link): JsonResponse
+    {
+        $link->loadCount([
+            'visits as total_hits',
+            'visits as failed_hits' => fn ($query) => $query->where('successful', false),
+        ]);
+
+        return response()->json([
+            'id' => $link->id,
+            'token_id' => $link->token_id,
+            'public_url' => $link->publicUrl(),
+            'destination_url' => $link->destination_url,
+            'delivery_mode' => $link->delivery_mode,
+            'hits' => ['total' => $link->total_hits, 'failed' => $link->failed_hits],
+            'expire_at' => $link->expires_at->toIso8601String(),
+            'expired' => $link->expires_at->isPast(),
+            'created_at' => $link->created_at->toIso8601String(),
+            'updated_at' => $link->updated_at->toIso8601String(),
+            'users' => $link->visits()->latest('created_at')->limit(100)->get()->map(fn ($visit) => [
+                'ip' => $visit->ip_address,
+                'location' => array_filter([
+                    'country' => $visit->country,
+                    'region' => $visit->region,
+                    'city' => $visit->city,
+                ]),
+                'browser' => $visit->browser,
+                'device' => $visit->device,
+                'successful' => $visit->successful,
+                'failure_reason' => $visit->failure_reason,
+                'visited_at' => $visit->created_at?->toIso8601String(),
+            ]),
+        ]);
     }
 
     public function storeDomain(Request $request): JsonResponse

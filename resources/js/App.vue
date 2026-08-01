@@ -16,8 +16,10 @@ const adminUser = ref('');
 const adminPassword = ref('');
 const adminData = ref(null);
 const adminAuthenticated = ref(false);
+const adminLinkDetails = ref(null);
 const publicDomains = ref([]);
 const selectedDomainId = ref(null);
+const deliveryMode = ref('redirect');
 const newDomainLabel = ref('');
 const newDomainUrl = ref('');
 
@@ -41,7 +43,7 @@ const api = async (url, options = {}) => {
 const createLink = async () => {
   busy.value = true;
   try {
-    created.value = await api('/api/links', { method: 'POST', body: JSON.stringify({ url: destination.value, expire_at: new Date(`${expiry.value}T23:59:59`).toISOString(), type: 'anonymous', domain_id: selectedDomainId.value }) });
+    created.value = await api('/api/links', { method: 'POST', body: JSON.stringify({ url: destination.value, expire_at: new Date(`${expiry.value}T23:59:59`).toISOString(), type: deliveryMode.value, domain_id: selectedDomainId.value }) });
     tokenId.value = created.value.token_id; secretKey.value = created.value.secret_key;
     localStorage.setItem('ulink_credentials', JSON.stringify({ token_id: tokenId.value, secret_key: secretKey.value }));
   } catch (e) { error.value = e.message; } finally { busy.value = false; }
@@ -69,6 +71,7 @@ const copy = async (text, label = 'Copied to clipboard.') => {
 };
 
 const go = (next) => {
+  if (page.value === next) { location.reload(); return; }
   page.value = next; const path = next === 'home' ? '/' : `/${next}`; history.pushState({}, '', path); error.value = ''; notice.value = '';
 };
 
@@ -92,6 +95,11 @@ const deleteLink = async (link) => {
   if (!confirm(`Permanently delete ${link.public_url}?`)) return;
   try { await api(`/api/admin/links/${link.id}`, { method: 'DELETE', headers: adminHeaders() }); await loadAdmin(); notice.value = 'Link deleted.'; }
   catch (e) { error.value = e.message; }
+};
+const openAdminLink = async (link) => {
+  busy.value = true;
+  try { adminLinkDetails.value = await api(`/api/admin/links/${link.id}`, { headers: adminHeaders() }); }
+  catch (e) { error.value = e.message; } finally { busy.value = false; }
 };
 const addDomain = async () => {
   busy.value = true;
@@ -118,6 +126,7 @@ const adminLogout = () => {
   sessionStorage.removeItem('ulink_admin');
   adminAuthenticated.value = false; adminData.value = null;
   adminUser.value = ''; adminPassword.value = '';
+  adminLinkDetails.value = null;
 };
 
 const expiryLabel = computed(() => created.value ? new Date(created.value.expire_at).toLocaleDateString(undefined, { dateStyle: 'long' }) : '');
@@ -161,7 +170,13 @@ onMounted(() => {
             <select v-model="selectedDomainId">
               <option v-for="domain in publicDomains" :key="domain.id ?? 'current'" :value="domain.id">{{ domain.label || domain.base_url }} — {{ domain.base_url }}</option>
             </select>
-            <div class="field-row"><div><label>Expires on</label><input v-model="expiry" type="date" required></div><div class="fixed"><label>Link type</label><div class="pill-field">Anonymous <span>●</span></div></div></div>
+            <label>Delivery mode</label>
+            <div class="mode-options" role="radiogroup" aria-label="Delivery mode">
+              <label :class="['mode-option', { selected: deliveryMode === 'redirect' }]"><input v-model="deliveryMode" type="radio" value="redirect"><span class="mode-icon">↗</span><span><strong>Redirect</strong><small>Sends visitors to the latest tunnel URL.</small></span><i>✓</i></label>
+              <label :class="['mode-option', { selected: deliveryMode === 'proxy' }]"><input v-model="deliveryMode" type="radio" value="proxy"><span class="mode-icon">⇄</span><span><strong>Proxy</strong><small>ULink fetches and serves the upstream content.</small></span><i>✓</i></label>
+            </div>
+            <p v-if="deliveryMode === 'proxy'" class="mode-note">Proxy mode keeps the ULink in the address bar. Private network targets are blocked for security.</p>
+            <div class="expiry-field"><label>Expires on</label><input v-model="expiry" type="date" required></div>
             <button class="primary" :disabled="busy">{{ busy ? 'Creating…' : 'Create persistent link' }} <span>→</span></button>
           </form>
           <p class="fine">Your secret is shown only once. Keep it somewhere safe.</p>
@@ -186,7 +201,7 @@ onMounted(() => {
       </section>
       <template v-if="details">
         <section class="stats"><div><span>Total hits</span><strong>{{ details.hits.total }}</strong></div><div><span>Failed hits</span><strong>{{ details.hits.failed }}</strong></div><div><span>Status</span><strong :class="details.expired ? 'bad' : 'good'">{{ details.expired ? 'Expired' : 'Active' }}</strong></div><div><span>Expires</span><strong class="small">{{ new Date(details.expire_at).toLocaleDateString() }}</strong></div></section>
-        <section class="card update-card"><div><h2>Update destination</h2><p>The public address remains <code>{{ details.public_url }}</code></p></div><form @submit.prevent="updateLink"><input v-model="newDestination" required type="url"><button class="primary" :disabled="busy">Update URL</button></form></section>
+        <section class="card update-card"><div><h2>Update destination</h2><p>The public address remains <code>{{ details.public_url }}</code> · {{ details.type === 'proxy' ? 'Proxy' : 'Redirect' }} mode</p></div><form @submit.prevent="updateLink"><input v-model="newDestination" required type="url"><button class="primary" :disabled="busy">Update URL</button></form></section>
         <section class="card"><div class="table-head"><div><h2>Recent visitors</h2><p>Latest 100 redirect attempts</p></div></div><div class="table-wrap"><table><thead><tr><th>IP address</th><th>Location</th><th>Browser</th><th>Device</th><th>Time</th><th>Result</th></tr></thead><tbody><tr v-for="visit in details.users" :key="visit.visited_at + visit.ip"><td><code>{{ visit.ip }}</code></td><td>{{ [visit.location.city, visit.location.region, visit.location.country].filter(Boolean).join(', ') || 'Unknown' }}</td><td>{{ visit.browser }}</td><td>{{ visit.device }}</td><td>{{ new Date(visit.visited_at).toLocaleString() }}</td><td><span :class="['tag', visit.successful ? 'good-bg' : 'bad-bg']">{{ visit.successful ? 'Redirected' : 'Failed' }}</span></td></tr><tr v-if="!details.users.length"><td colspan="6" class="empty">No visits yet.</td></tr></tbody></table></div></section>
       </template>
     </main>
@@ -211,12 +226,23 @@ onMounted(() => {
           </div>
           <p v-else class="domain-empty">No custom domains configured. New links currently use the main APP_URL domain.</p>
         </section>
-        <section class="card"><div class="table-head"><div><h2>All links</h2><p>Newest anonymous links first</p></div><button class="secondary" @click="loadAdmin">Refresh</button></div><div class="table-wrap"><table><thead><tr><th>Public link</th><th>Destination</th><th>Hits</th><th>Expires</th><th></th></tr></thead><tbody><tr v-for="link in adminData.links.data" :key="link.id"><td><a :href="link.public_url" target="_blank">{{ link.public_url }}</a><small>{{ link.token_id }}</small></td><td class="truncate">{{ link.destination_url }}</td><td>{{ link.total_hits }} <small>({{ link.failed_hits }} failed)</small></td><td>{{ new Date(link.expire_at).toLocaleDateString() }}</td><td><button class="danger" @click="deleteLink(link)">Delete</button></td></tr></tbody></table></div></section>
+        <section class="card"><div class="table-head"><div><h2>All links</h2><p>Newest anonymous links first</p></div><button class="secondary" @click="loadAdmin">Refresh</button></div><div class="table-wrap"><table><thead><tr><th>Public link</th><th>Destination</th><th>Mode</th><th>Hits</th><th>Expires</th><th></th></tr></thead><tbody><tr v-for="link in adminData.links.data" :key="link.id"><td><a :href="link.public_url" target="_blank">{{ link.public_url }}</a><small>{{ link.token_id }}</small></td><td class="truncate">{{ link.destination_url }}</td><td><span class="tag default-tag">{{ link.delivery_mode }}</span></td><td>{{ link.total_hits }} <small>({{ link.failed_hits }} failed)</small></td><td>{{ new Date(link.expire_at).toLocaleDateString() }}</td><td><div class="row-actions"><button class="secondary" @click="openAdminLink(link)">View</button><button class="danger" @click="deleteLink(link)">Delete</button></div></td></tr></tbody></table></div></section>
       </template>
     </main>
 
+    <div v-if="adminLinkDetails" class="modal-backdrop" @click.self="adminLinkDetails = null">
+      <section class="detail-modal" role="dialog" aria-modal="true" aria-labelledby="link-detail-title">
+        <header class="detail-header"><div><span class="eyebrow">LINK DETAILS</span><h2 id="link-detail-title">{{ adminLinkDetails.public_url }}</h2></div><button class="modal-close" aria-label="Close link details" @click="adminLinkDetails = null">×</button></header>
+        <div class="detail-content">
+          <div class="detail-actions"><a :href="adminLinkDetails.public_url" target="_blank" class="primary">Open public link</a><button class="secondary" @click="copy(adminLinkDetails.public_url, 'Public URL copied.')">Copy URL</button></div>
+          <div class="detail-grid"><div><span>Destination</span><code>{{ adminLinkDetails.destination_url }}</code></div><div><span>Token ID</span><code>{{ adminLinkDetails.token_id }}</code></div><div><span>Delivery mode</span><strong>{{ adminLinkDetails.delivery_mode }}</strong></div><div><span>Status</span><strong :class="adminLinkDetails.expired ? 'bad' : 'good'">{{ adminLinkDetails.expired ? 'Expired' : 'Active' }}</strong></div><div><span>Created</span><strong>{{ new Date(adminLinkDetails.created_at).toLocaleString() }}</strong></div><div><span>Expires</span><strong>{{ new Date(adminLinkDetails.expire_at).toLocaleString() }}</strong></div></div>
+          <div class="detail-stats"><div><span>Total hits</span><strong>{{ adminLinkDetails.hits.total }}</strong></div><div><span>Failed hits</span><strong>{{ adminLinkDetails.hits.failed }}</strong></div><div><span>Successful</span><strong>{{ adminLinkDetails.hits.total - adminLinkDetails.hits.failed }}</strong></div></div>
+          <div class="detail-visitors"><div class="table-head"><div><h3>Recent visitors</h3><p>Latest 100 requests and redirect attempts</p></div></div><div class="table-wrap"><table><thead><tr><th>IP address</th><th>Location</th><th>Browser</th><th>Device</th><th>Time</th><th>Result</th></tr></thead><tbody><tr v-for="visit in adminLinkDetails.users" :key="visit.visited_at + visit.ip"><td><code>{{ visit.ip }}</code></td><td>{{ [visit.location.city, visit.location.region, visit.location.country].filter(Boolean).join(', ') || 'Unknown' }}</td><td>{{ visit.browser }}</td><td>{{ visit.device }}</td><td>{{ new Date(visit.visited_at).toLocaleString() }}</td><td><span :class="['tag', visit.successful ? 'good-bg' : 'bad-bg']">{{ visit.successful ? 'Success' : visit.failure_reason || 'Failed' }}</span></td></tr><tr v-if="!adminLinkDetails.users.length"><td colspan="6" class="empty">No visits recorded yet.</td></tr></tbody></table></div></div>
+        </div>
+      </section>
+    </div>
+
     <div v-if="error" class="toast error">{{ error }} <button @click="error = ''">×</button></div>
     <div v-if="notice" class="toast">{{ notice }} <button @click="notice = ''">×</button></div>
-    <footer v-if="page !== 'admin'" class="wrap"><span>ULink / Updateable infrastructure links</span><span>Built for Cloudflare Tunnels</span></footer>
   </div>
 </template>

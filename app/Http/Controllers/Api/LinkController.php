@@ -39,7 +39,7 @@ class LinkController extends Controller
             'url' => ['required', 'url:http,https', 'max:4096'],
             'expire_at' => ['nullable', 'date'],
             'expires_at' => ['nullable', 'date'],
-            'type' => ['nullable', 'in:anonymous,anoymouse'],
+            'type' => ['nullable', 'in:anonymous,anoymouse,redirect,proxy'],
             'domain_id' => ['nullable', 'integer', 'exists:public_domains,id'],
         ]);
 
@@ -66,6 +66,7 @@ class LinkController extends Controller
             'slug' => Str::lower(Str::random(10)),
             'destination_url' => $data['url'],
             'public_base_url' => $publicBaseUrl,
+            'delivery_mode' => ($data['type'] ?? 'redirect') === 'proxy' ? 'proxy' : 'redirect',
             'expires_at' => $expiresAt,
         ]);
 
@@ -74,6 +75,7 @@ class LinkController extends Controller
             'secret_key' => $secret,
             'expire_at' => $link->expires_at->toIso8601String(),
             'url' => $link->publicUrl(),
+            'type' => $link->delivery_mode,
         ], 201);
     }
 
@@ -96,6 +98,7 @@ class LinkController extends Controller
         return response()->json([
             'url' => $link->publicUrl(),
             'destination_url' => $link->destination_url,
+            'type' => $link->delivery_mode,
             'expire_at' => $link->expires_at->toIso8601String(),
         ]);
     }

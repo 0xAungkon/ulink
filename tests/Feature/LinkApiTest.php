@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Link;
 use App\Support\LinkCredentials;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class LinkApiTest extends TestCase
@@ -88,6 +89,36 @@ class LinkApiTest extends TestCase
             ->assertJsonStructure(['stats', 'links']);
     }
 
+    public function test_admin_can_view_complete_link_details_without_link_secret(): void
+    {
+        config(['ulink.admin_username' => 'operator', 'ulink.admin_password' => 'safe-password']);
+        $link = Link::create([
+            'token_id' => 'admin-visible-token',
+            'secret_hash' => LinkCredentials::hash('never-return-this'),
+            'slug' => 'detail1234',
+            'destination_url' => 'https://example.com/current',
+            'delivery_mode' => 'redirect',
+            'expires_at' => now()->addDay(),
+        ]);
+        $link->visits()->create([
+            'ip_address' => '203.0.113.10',
+            'browser' => 'Chrome',
+            'device' => 'Desktop',
+            'successful' => true,
+            'created_at' => now(),
+        ]);
+
+        $this->withBasicAuth('operator', 'safe-password')
+            ->getJson('/api/admin/links/'.$link->id)
+            ->assertOk()
+            ->assertJsonPath('token_id', 'admin-visible-token')
+            ->assertJsonPath('delivery_mode', 'redirect')
+            ->assertJsonPath('hits.total', 1)
+            ->assertJsonPath('users.0.ip', '203.0.113.10')
+            ->assertJsonMissing(['secret_hash'])
+            ->assertJsonMissing(['secret_key']);
+    }
+
     public function test_admin_can_configure_a_public_domain_and_user_can_select_it(): void
     {
         config(['ulink.admin_username' => 'operator', 'ulink.admin_password' => 'safe-password']);
@@ -117,5 +148,54 @@ class LinkApiTest extends TestCase
         ])->assertCreated()->json();
 
         $this->assertStringStartsWith('https://go.example.com/', $created['url']);
+    }
+
+    public function test_proxy_mode_fetches_and_rewrites_upstream_content(): void
+    {
+        Http::fake([
+            'http://93.184.216.34/*' => Http::response(
+                '<html><head><title>App</title></head><body><img src="/logo.png"></body></html>',
+                200,
+                ['Content-Type' => 'text/html'],
+            ),
+        ]);
+
+        $link = Link::create([
+            'token_id' => 'proxy-token',
+            'secret_hash' => LinkCredentials::hash('secret'),
+            'slug' => 'proxy12345',
+            'destination_url' => 'http://93.184.216.34/app',
+            'delivery_mode' => 'proxy',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $this->get('/'.$link->slug)
+            ->assertOk()
+            ->assertSee('<base href="/proxy12345/">', false)
+            ->assertSee('src="/proxy12345/logo.png"', false);
+
+        $this->assertDatabaseHas('link_visits', [
+            'link_id' => $link->id,
+            'successful' => true,
+        ]);
+    }
+
+    public function test_proxy_mode_blocks_private_network_targets(): void
+    {
+        $link = Link::create([
+            'token_id' => 'blocked-proxy-token',
+            'secret_hash' => LinkCredentials::hash('secret'),
+            'slug' => 'block12345',
+            'destination_url' => 'http://127.0.0.1/private',
+            'delivery_mode' => 'proxy',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $this->get('/'.$link->slug)->assertStatus(502);
+        $this->assertDatabaseHas('link_visits', [
+            'link_id' => $link->id,
+            'successful' => false,
+            'failure_reason' => 'proxy_unavailable',
+        ]);
     }
 }

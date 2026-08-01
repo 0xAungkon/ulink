@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Link extends Model
 {
-    protected $fillable = ['token_id', 'secret_hash', 'slug', 'destination_url', 'public_base_url', 'expires_at'];
+    protected $fillable = ['token_id', 'secret_hash', 'slug', 'destination_url', 'public_base_url', 'delivery_mode', 'expires_at'];
 
     protected $hidden = ['secret_hash'];
 
