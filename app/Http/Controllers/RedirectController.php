@@ -12,9 +12,11 @@ use GuzzleHttp\Cookie\SetCookie;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Symfony\Component\HttpFoundation\Cookie as BrowserCookie;
 use Symfony\Component\HttpFoundation\Response;
 
 class RedirectController extends Controller
@@ -143,6 +145,7 @@ class RedirectController extends Controller
                 ...PublicDomain::pluck('base_url')->map(fn ($url) => parse_url($url, PHP_URL_HOST))->all(),
             ]);
             SafeProxyUrl::assert($targetUrl, $blockedHosts);
+            $this->mergeBrowserCookies($request, $link, $targetUrl, $jar);
 
             $headers = array_filter([
                 'Accept' => $request->header('Accept'),
@@ -181,6 +184,7 @@ class RedirectController extends Controller
             }
 
             $response = response($body, $upstream->status(), $responseHeaders);
+            $this->mirrorUpstreamCookies($upstream->headers(), $response, $request, $link);
             $response->headers->setCookie(cookie(
                 'ulink_proxy_visitor',
                 $visitorKey,
@@ -233,10 +237,90 @@ class RedirectController extends Controller
     {
         $prefix = json_encode('/'.$link->slug, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
         $slug = json_encode($link->slug, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+        $cookiePrefix = json_encode('ulink_up_'.$link->slug.'_', JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 
         return <<<HTML
-<script data-ulink-proxy>(function(){const p={$prefix},s={$slug};const rw=function(v){try{const u=new URL(String(v),location.href);if(u.origin===location.origin&&u.pathname!==p&&!u.pathname.startsWith(p+'/'))return p+u.pathname+u.search+u.hash}catch(e){}return v};const f=window.fetch;window.fetch=function(i,o){o=o||{};const h=new Headers(o.headers||(i instanceof Request?i.headers:{}));h.set('X-ULink-Proxy',s);o.headers=h;if(i instanceof Request)i=new Request(rw(i.url),i);else i=rw(i);return f.call(this,i,o)};const xo=XMLHttpRequest.prototype.open,xs=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.open=function(m,u){arguments[1]=rw(u);this.__ulink=true;return xo.apply(this,arguments)};XMLHttpRequest.prototype.send=function(){if(this.__ulink)this.setRequestHeader('X-ULink-Proxy',s);return xs.apply(this,arguments)};document.addEventListener('submit',function(e){const f=e.target;if(f&&f.action)f.action=rw(f.action)},true)})();</script>
+<script data-ulink-proxy>(function(){const p={$prefix},s={$slug},cp={$cookiePrefix};const rw=function(v){try{const u=new URL(String(v),location.href);if(u.origin===location.origin&&u.pathname!==p&&!u.pathname.startsWith(p+'/'))return p+u.pathname+u.search+u.hash}catch(e){}return v};const f=window.fetch;window.fetch=function(i,o){o=o||{};const h=new Headers(o.headers||(i instanceof Request?i.headers:{}));h.set('X-ULink-Proxy',s);o.headers=h;if(i instanceof Request)i=new Request(rw(i.url),i);else i=rw(i);return f.call(this,i,o)};const xo=XMLHttpRequest.prototype.open,xs=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.open=function(m,u){arguments[1]=rw(u);this.__ulink=true;return xo.apply(this,arguments)};XMLHttpRequest.prototype.send=function(){if(this.__ulink)this.setRequestHeader('X-ULink-Proxy',s);return xs.apply(this,arguments)};document.addEventListener('submit',function(e){const f=e.target;if(f&&f.action)f.action=rw(f.action)},true);const d=Object.getOwnPropertyDescriptor(Document.prototype,'cookie');if(d&&d.get&&d.set){const en=n=>btoa(n).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');const de=n=>{try{return atob(n.replace(/-/g,'+').replace(/_/g,'/')+'==='.slice((n.length+3)%4))}catch(e){return n}};Object.defineProperty(document,'cookie',{configurable:true,get(){return d.get.call(document).split(/;\s*/).filter(c=>c.startsWith(cp)).map(c=>{const x=c.indexOf('=');return de(c.slice(cp.length,x))+c.slice(x)}).join('; ')},set(v){const x=String(v).indexOf('=');if(x<1)return;let rest=String(v).slice(x),attrs='';const semi=rest.indexOf(';');if(semi>=0){attrs=rest.slice(semi);rest=rest.slice(0,semi)}if(/;\s*path=/i.test(attrs))attrs=attrs.replace(/;\s*path=([^;]*)/i,(_,q)=>'; Path='+p+(q==='/'?'':q));else attrs+='; Path='+p;d.set.call(document,cp+en(String(v).slice(0,x))+rest+attrs)}})}})();</script>
 HTML;
+    }
+
+    private function mergeBrowserCookies(Request $request, Link $link, string $targetUrl, CookieJar $jar): void
+    {
+        $prefix = 'ulink_up_'.$link->slug.'_';
+        $host = (string) parse_url($targetUrl, PHP_URL_HOST);
+
+        foreach ($request->cookies->all() as $browserName => $value) {
+            if (! str_starts_with($browserName, $prefix) || ! is_string($value)) {
+                continue;
+            }
+
+            $upstreamName = $this->decodeCookieName(substr($browserName, strlen($prefix)));
+            if ($upstreamName === null) {
+                continue;
+            }
+
+            $stored = collect($jar->toArray())->first(fn ($cookie) => ($cookie['Name'] ?? null) === $upstreamName);
+            if ($stored) {
+                $jar->clear($stored['Domain'] ?? $host, $stored['Path'] ?? '/', $upstreamName);
+            }
+            $jar->setCookie(new SetCookie([
+                'Name' => $upstreamName,
+                'Value' => $value,
+                'Domain' => $stored['Domain'] ?? $host,
+                'Path' => $stored['Path'] ?? '/',
+                'Secure' => str_starts_with($targetUrl, 'https://'),
+                'HttpOnly' => $stored['HttpOnly'] ?? false,
+            ]));
+        }
+    }
+
+    private function mirrorUpstreamCookies(array $headers, Response $response, Request $request, Link $link): void
+    {
+        $setCookieHeaders = $headers['Set-Cookie'] ?? $headers['set-cookie'] ?? [];
+        foreach ((array) $setCookieHeaders as $line) {
+            $upstream = SetCookie::fromString($line);
+            if (! $upstream->getName()) {
+                continue;
+            }
+
+            $browserName = 'ulink_up_'.$link->slug.'_'.$this->encodeCookieName($upstream->getName());
+            $upstreamPath = '/'.ltrim((string) ($upstream->getPath() ?: '/'), '/');
+            $browserPath = '/'.$link->slug.($upstreamPath === '/' ? '' : $upstreamPath);
+            $data = $upstream->toArray();
+            $sameSite = strtolower((string) ($data['SameSite'] ?? 'lax'));
+            if (! in_array($sameSite, ['lax', 'strict', 'none'], true)) {
+                $sameSite = 'lax';
+            }
+            $secure = (bool) $upstream->getSecure() && $request->isSecure();
+            if ($sameSite === 'none' && ! $secure) {
+                $sameSite = 'lax';
+            }
+
+            EncryptCookies::except($browserName);
+            $response->headers->setCookie(BrowserCookie::create(
+                $browserName,
+                (string) $upstream->getValue(),
+                $upstream->getExpires() ?: 0,
+                $browserPath,
+                null,
+                $secure,
+                (bool) $upstream->getHttpOnly(),
+                false,
+                $sameSite,
+            ));
+        }
+    }
+
+    private function encodeCookieName(string $name): string
+    {
+        return rtrim(strtr(base64_encode($name), '+/', '-_'), '=');
+    }
+
+    private function decodeCookieName(string $encoded): ?string
+    {
+        $decoded = base64_decode(strtr($encoded, '-_', '+/'), true);
+
+        return is_string($decoded) && $decoded !== '' ? $decoded : null;
     }
 
     private function rewriteCss(string $body, Link $link): string
