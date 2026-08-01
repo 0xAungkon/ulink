@@ -403,6 +403,57 @@ class LinkApiTest extends TestCase
             && str_contains($request->body(), 'person@example.com'));
     }
 
+    public function test_relative_upstream_redirect_is_kept_inside_the_proxy_and_can_be_reloaded(): void
+    {
+        Http::fake(['*' => Http::sequence()
+            ->push('', 302, ['Location' => 'login'])
+            ->push('<h1>Login</h1>', 200, ['Content-Type' => 'text/html'])
+            ->push('<h1>Login</h1>', 200, ['Content-Type' => 'text/html'])]);
+        $link = Link::create([
+            'token_id' => 'relative-redirect-token',
+            'secret_hash' => LinkCredentials::hash('secret'),
+            'slug' => 'relredir12',
+            'destination_url' => 'http://93.184.216.34',
+            'delivery_mode' => 'proxy',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $this->withHeader('X-ULink-No-Screen', 'test')
+            ->get('/'.$link->slug)
+            ->assertRedirect('/'.$link->slug.'/login');
+
+        $this->get('/'.$link->slug.'/login')->assertOk()->assertSee('Login');
+        $this->get('/'.$link->slug.'/login')->assertOk()->assertSee('Login');
+
+        Http::assertSentCount(3);
+        Http::assertSent(fn ($request) => $request->url() === 'http://93.184.216.34/login');
+    }
+
+    public function test_bare_browser_navigation_is_canonicalized_to_its_referring_proxy(): void
+    {
+        Http::fake(['*' => Http::response('<h1>Login</h1>', 200, ['Content-Type' => 'text/html'])]);
+        $link = Link::create([
+            'token_id' => 'browser-navigation-token',
+            'secret_hash' => LinkCredentials::hash('secret'),
+            'slug' => 'brownav123',
+            'destination_url' => 'http://93.184.216.34',
+            'delivery_mode' => 'proxy',
+            'expires_at' => now()->addDay(),
+        ]);
+        $browser = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36';
+
+        $this->withHeaders([
+            'Accept' => 'text/html',
+            'User-Agent' => $browser,
+            'Referer' => 'http://localhost/'.$link->slug,
+            'Sec-Fetch-Mode' => 'navigate',
+        ])->get('/login?next=home')
+            ->assertRedirect('/'.$link->slug.'/login?next=home');
+
+        $this->get('/'.$link->slug.'/login?next=home')->assertOk()->assertSee('Login');
+        Http::assertSent(fn ($request) => $request->url() === 'http://93.184.216.34/login?next=home');
+    }
+
     public function test_proxy_sessions_are_isolated_for_each_link(): void
     {
         Http::fake(['*' => Http::response('ok', 200, ['Content-Type' => 'text/plain'])]);
