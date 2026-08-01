@@ -114,6 +114,11 @@ const deleteDomain = async (domain) => {
     await loadAdmin(); await loadDomains(); notice.value = 'Domain removed. Existing links were not changed.';
   } catch (e) { error.value = e.message; }
 };
+const adminLogout = () => {
+  sessionStorage.removeItem('ulink_admin');
+  adminAuthenticated.value = false; adminData.value = null;
+  adminUser.value = ''; adminPassword.value = '';
+};
 
 const expiryLabel = computed(() => created.value ? new Date(created.value.expire_at).toLocaleDateString(undefined, { dateStyle: 'long' }) : '');
 
@@ -128,11 +133,14 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="shell">
-    <header class="nav wrap">
+  <div :class="['shell', { 'admin-shell': page === 'admin' }]">
+    <header v-if="page !== 'admin'" class="nav wrap">
       <button class="brand" @click="go('home')"><span class="brand-mark">U</span><span>ULink</span></button>
-      <nav><button :class="{ active: page === 'home' }" @click="go('home')">Create</button><button :class="{ active: page === 'manage' }" @click="go('manage')">Manage</button><button :class="{ active: page === 'admin' }" @click="go('admin')">Admin</button></nav>
+      <nav><button :class="{ active: page === 'home' }" @click="go('home')">Create link</button><button :class="{ active: page === 'manage' }" @click="go('manage')">Manage link</button></nav>
       <span class="status"><i></i> Service online</span>
+    </header>
+    <header v-else class="admin-nav">
+      <div class="wrap admin-nav-inner"><div class="admin-brand"><span class="brand-mark">U</span><div><strong>ULink</strong><small>Administration portal</small></div></div><div class="admin-actions"><button class="secondary" @click="go('home')">View public portal</button><button v-if="adminAuthenticated" class="logout" @click="adminLogout">Sign out</button></div></div>
     </header>
 
     <main v-if="page === 'home'" class="wrap hero-grid">
@@ -184,8 +192,8 @@ onMounted(() => {
     </main>
 
     <main v-else class="wrap page admin-page">
-      <div class="page-title"><div class="eyebrow">ENV-PROTECTED ACCESS</div><h1>Administration</h1><p>Credentials are configured on the server, never in the database.</p></div>
-      <section v-if="!adminAuthenticated" class="card login-card"><h2>Admin sign in</h2><form @submit.prevent="loadAdmin"><label>Username</label><input v-model="adminUser" autocomplete="username" required><label>Password</label><input v-model="adminPassword" type="password" autocomplete="current-password" required><button class="primary" :disabled="busy">{{ busy ? 'Signing in…' : 'Sign in' }}</button></form></section>
+      <div class="page-title admin-title"><div class="eyebrow">SECURE OPERATIONS</div><h1>{{ adminAuthenticated ? 'Dashboard' : 'Welcome back' }}</h1><p>{{ adminAuthenticated ? 'Manage public domains, links, and service activity.' : 'Sign in with the administrator credentials configured on the server.' }}</p></div>
+      <section v-if="!adminAuthenticated" class="card login-card"><div class="login-icon">⌁</div><h2>Admin sign in</h2><p>Enter your secure environment credentials to continue.</p><form @submit.prevent="loadAdmin"><label>Username</label><input v-model="adminUser" autocomplete="username" required placeholder="Administrator username"><label>Password</label><input v-model="adminPassword" type="password" autocomplete="current-password" required placeholder="Administrator password"><button class="primary" :disabled="busy">{{ busy ? 'Signing in…' : 'Sign in securely' }}</button></form><small class="security-note">Credentials are transmitted only to this server and are not stored in the database.</small></section>
       <template v-else-if="adminData">
         <section class="stats admin-stats"><div><span>Total links</span><strong>{{ adminData.stats.total_links }}</strong></div><div><span>Active</span><strong>{{ adminData.stats.active_links }}</strong></div><div><span>Expired</span><strong>{{ adminData.stats.expired_links }}</strong></div><div><span>Total hits</span><strong>{{ adminData.stats.total_hits }}</strong></div><div><span>Failed hits</span><strong>{{ adminData.stats.failed_hits }}</strong></div></section>
         <section class="card domains-card">
@@ -209,6 +217,6 @@ onMounted(() => {
 
     <div v-if="error" class="toast error">{{ error }} <button @click="error = ''">×</button></div>
     <div v-if="notice" class="toast">{{ notice }} <button @click="notice = ''">×</button></div>
-    <footer class="wrap"><span>ULink / Updateable infrastructure links</span><span>Built for Cloudflare Tunnels</span></footer>
+    <footer v-if="page !== 'admin'" class="wrap"><span>ULink / Updateable infrastructure links</span><span>Built for Cloudflare Tunnels</span></footer>
   </div>
 </template>
