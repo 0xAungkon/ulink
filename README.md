@@ -60,7 +60,9 @@ Content-Type: application/json
 
 The response includes `token_id`, `secret_key`, `expire_at`, and the stable `url`. The plaintext secret cannot be recovered later.
 
-Set `type` to `redirect` (the default) to send visitors to the current destination, or `proxy` to fetch upstream responses through ULink while keeping the public URL in the browser. Proxy mode rewrites common relative HTML/CSS asset paths, does not forward cookies or authorization headers, and blocks localhost, private, reserved, and configured ULink hosts to reduce SSRF risk. Highly dynamic applications that build absolute URLs in JavaScript may still require upstream proxy-awareness.
+Set `type` to `redirect` (the default) to send visitors to the current destination, or `proxy` to fetch upstream responses through ULink while keeping the public URL in the browser. Proxy mode rewrites common relative HTML/CSS asset paths, keeps upstream cookies in encrypted link-scoped server sessions, never forwards ULink's own cookies or authorization headers, and blocks localhost, private, reserved, and configured ULink hosts to reduce SSRF risk. Highly dynamic applications that build cross-origin absolute URLs in JavaScript may still require upstream proxy-awareness.
+
+Browser visitors see a one-time safety notice for each individual link before redirecting or loading proxied content. API clients may send `X-ULink-No-Screen` with any value to bypass this HTML notice. Proxy mode injects routing support for root-relative Fetch/XHR/form requests and uses encrypted server-side upstream cookie jars keyed by both browser and link, allowing one browser to stay signed in to multiple proxied links independently.
 
 `domain_id` may be supplied to choose one of the active entries returned by `GET /api/domains`. If the administrator has not configured any domains yet, the API and creation form use the main `APP_URL` domain. A link snapshots its selected base URL so later domain configuration changes do not alter existing addresses.
 

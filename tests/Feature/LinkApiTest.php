@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Link;
+use App\Models\ProxySession;
 use App\Support\LinkCredentials;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -51,6 +52,7 @@ class LinkApiTest extends TestCase
             'CF-Connecting-IP' => '203.0.113.8',
             'CF-IPCountry' => 'BD',
             'User-Agent' => 'Mozilla/5.0 Chrome/126.0 Mobile',
+            'X-ULink-No-Screen' => 'test',
         ])->get('/'.$link->slug)->assertRedirect('https://example.com/current');
 
         $this->assertDatabaseHas('link_visits', [
@@ -169,7 +171,7 @@ class LinkApiTest extends TestCase
             'expires_at' => now()->addDay(),
         ]);
 
-        $this->get('/'.$link->slug)
+        $this->withHeader('X-ULink-No-Screen', 'test')->get('/'.$link->slug)
             ->assertOk()
             ->assertSee('<base href="/proxy12345/">', false)
             ->assertSee('src="/proxy12345/logo.png"', false);
@@ -191,11 +193,108 @@ class LinkApiTest extends TestCase
             'expires_at' => now()->addDay(),
         ]);
 
-        $this->get('/'.$link->slug)->assertStatus(502);
+        $this->withHeader('X-ULink-No-Screen', 'test')->get('/'.$link->slug)->assertStatus(502);
         $this->assertDatabaseHas('link_visits', [
             'link_id' => $link->id,
             'successful' => false,
             'failure_reason' => 'proxy_unavailable',
         ]);
+    }
+
+    public function test_browser_sees_a_per_link_caution_before_redirecting(): void
+    {
+        $link = Link::create([
+            'token_id' => 'caution-token',
+            'secret_hash' => LinkCredentials::hash('secret'),
+            'slug' => 'caution123',
+            'destination_url' => 'http://93.184.216.34/site',
+            'delivery_mode' => 'redirect',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $warning = $this->withHeader('Accept', 'text/html')->get('/'.$link->slug)
+            ->assertOk()
+            ->assertSee('Make sure you trust this website')
+            ->assertSee('93.184.216.34');
+
+        $this->assertDatabaseCount('link_visits', 0);
+
+        $nonce = $warning->getCookie('ulink_caution_'.$link->slug)->getValue();
+        $this->withCookie('ulink_caution_'.$link->slug, $nonce)
+            ->withHeader('Accept', 'text/html')
+            ->get('/'.$link->slug.'?__ulink_continue='.$nonce)
+            ->assertRedirect('http://93.184.216.34/site')
+            ->assertCookie('ulink_trust_'.$link->slug, '1');
+    }
+
+    public function test_root_relative_post_is_routed_to_referring_proxy(): void
+    {
+        Http::fake(['*' => Http::response(['authenticated' => true], 200)]);
+        $link = Link::create([
+            'token_id' => 'fallback-token',
+            'secret_hash' => LinkCredentials::hash('secret'),
+            'slug' => 'fallback12',
+            'destination_url' => 'http://93.184.216.34/app',
+            'delivery_mode' => 'proxy',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $this->withHeader('Referer', 'http://localhost/'.$link->slug)
+            ->postJson('/login', ['email' => 'person@example.com'])
+            ->assertOk()
+            ->assertJsonPath('authenticated', true);
+
+        Http::assertSent(fn ($request) => $request->method() === 'POST'
+            && $request->url() === 'http://93.184.216.34/app/login'
+            && str_contains($request->body(), 'person@example.com'));
+    }
+
+    public function test_proxy_sessions_are_isolated_for_each_link(): void
+    {
+        Http::fake(['*' => Http::response('ok', 200, ['Content-Type' => 'text/plain'])]);
+        $visitorKey = str_repeat('A', 48);
+
+        foreach (['session001', 'session002'] as $index => $slug) {
+            $link = Link::create([
+                'token_id' => 'session-token-'.$index,
+                'secret_hash' => LinkCredentials::hash('secret'),
+                'slug' => $slug,
+                'destination_url' => 'http://93.184.216.34/site-'.$index,
+                'delivery_mode' => 'proxy',
+                'expires_at' => now()->addDay(),
+            ]);
+            $this->withCookie('ulink_proxy_visitor', $visitorKey)
+                ->withHeader('X-ULink-No-Screen', 'test')
+                ->get('/'.$link->slug)
+                ->assertOk();
+        }
+
+        $this->assertDatabaseCount('proxy_sessions', 2);
+        $this->assertDatabaseCount('links', 2);
+    }
+
+    public function test_upstream_cookies_are_saved_in_the_link_scoped_proxy_session(): void
+    {
+        Http::fake(['*' => Http::response('signed in', 200, [
+            'Content-Type' => 'text/plain',
+            'Set-Cookie' => 'upstream_session=abc123; Path=/; HttpOnly',
+        ])]);
+        $link = Link::create([
+            'token_id' => 'cookie-session-token',
+            'secret_hash' => LinkCredentials::hash('secret'),
+            'slug' => 'cookies123',
+            'destination_url' => 'http://93.184.216.34',
+            'delivery_mode' => 'proxy',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $this->withCookie('ulink_proxy_visitor', str_repeat('B', 48))
+            ->withHeader('X-ULink-No-Screen', 'test')
+            ->get('/'.$link->slug)
+            ->assertOk();
+
+        $session = ProxySession::firstOrFail();
+        $this->assertSame('upstream_session', $session->cookies[0]['Name']);
+        $this->assertSame('abc123', $session->cookies[0]['Value']);
     }
 }
