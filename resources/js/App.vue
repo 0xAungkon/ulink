@@ -24,6 +24,9 @@ const selectedDomainId = ref(null);
 const deliveryMode = ref('redirect');
 const newDomainLabel = ref('');
 const newDomainUrl = ref('');
+const editingDomainId = ref(null);
+const editDomainLabel = ref('');
+const editDomainUrl = ref('');
 
 const defaultExpiry = () => {
   const d = new Date(); d.setFullYear(d.getFullYear() + 1); d.setDate(d.getDate() - 1);
@@ -123,6 +126,16 @@ const deleteDomain = async (domain) => {
     await api(`/api/admin/domains/${domain.id}`, { method: 'DELETE', headers: adminHeaders() });
     await loadAdmin(); await loadDomains(); notice.value = 'Domain removed. Existing links were not changed.';
   } catch (e) { error.value = e.message; }
+};
+const beginDomainEdit = (domain) => {
+  editingDomainId.value = domain.id;
+  editDomainLabel.value = domain.label || '';
+  editDomainUrl.value = domain.base_url;
+};
+const cancelDomainEdit = () => { editingDomainId.value = null; editDomainLabel.value = ''; editDomainUrl.value = ''; };
+const saveDomainEdit = async (domain) => {
+  await updateDomain(domain, { label: editDomainLabel.value || null, base_url: editDomainUrl.value });
+  cancelDomainEdit();
 };
 const adminLogout = () => {
   sessionStorage.removeItem('ulink_admin');
@@ -248,7 +261,7 @@ onMounted(() => {
 
           <section v-else-if="adminSection === 'links'" class="card admin-table-card"><div class="table-head"><div><h2>All links</h2><p>Inspect traffic, destinations, and delivery modes.</p></div><span class="record-count">{{ adminData.links.total }} records</span></div><div class="table-wrap"><table><thead><tr><th>Public link</th><th>Destination</th><th>Mode</th><th>Hits</th><th>Expires</th><th></th></tr></thead><tbody><tr v-for="link in adminData.links.data" :key="link.id"><td><a :href="link.public_url" target="_blank">{{ link.public_url }}</a><small>{{ link.token_id }}</small></td><td class="truncate">{{ link.destination_url }}</td><td><span class="tag default-tag">{{ link.delivery_mode }}</span></td><td>{{ link.total_hits }} <small>{{ link.failed_hits }} failed</small></td><td>{{ new Date(link.expire_at).toLocaleDateString() }}</td><td><div class="row-actions"><button class="secondary" @click="openAdminLink(link)">View</button><button class="danger" @click="deleteLink(link)">Delete</button></div></td></tr></tbody></table></div></section>
 
-          <section v-else class="card domains-card"><div class="table-head"><div><h2>Public domains</h2><p>Choose which domains and subdomains appear during link creation.</p></div><span class="record-count">{{ adminData.domains.length }} configured</span></div><form class="domain-form" @submit.prevent="addDomain"><input v-model="newDomainLabel" placeholder="Label (optional)"><input v-model="newDomainUrl" required placeholder="https://go.example.com"><button class="primary" :disabled="busy">Add domain</button></form><div v-if="adminData.domains.length" class="domain-list"><div v-for="domain in adminData.domains" :key="domain.id" class="domain-item"><div><strong>{{ domain.label || 'Public domain' }}</strong><code>{{ domain.base_url }}</code></div><span :class="['tag', domain.is_active ? 'good-bg' : 'bad-bg']">{{ domain.is_active ? 'Active' : 'Disabled' }}</span><span v-if="domain.is_default" class="tag default-tag">Default</span><button v-else class="secondary" @click="updateDomain(domain, { is_default: true })">Make default</button><button class="secondary" @click="updateDomain(domain, { is_active: !domain.is_active })">{{ domain.is_active ? 'Disable' : 'Enable' }}</button><button class="danger" @click="deleteDomain(domain)">Remove</button></div></div><p v-else class="domain-empty">No custom domains configured. New links currently use the main APP_URL domain.</p></section>
+          <section v-else class="card domains-card"><div class="table-head"><div><h2>Public domains</h2><p>Choose which domains and subdomains appear during link creation.</p></div><span class="record-count">{{ adminData.domains.length }} configured</span></div><form class="domain-form" @submit.prevent="addDomain"><input v-model="newDomainLabel" placeholder="Label (optional)"><input v-model="newDomainUrl" required placeholder="https://go.example.com"><button class="primary" :disabled="busy">Add domain</button></form><div v-if="adminData.domains.length" class="domain-list"><div v-for="domain in adminData.domains" :key="domain.id" class="domain-item"><form v-if="editingDomainId === domain.id" class="domain-edit-form" @submit.prevent="saveDomainEdit(domain)"><input v-model="editDomainLabel" placeholder="Domain label"><input v-model="editDomainUrl" required placeholder="https://go.example.com"><button class="primary" type="submit">Save changes</button><button class="secondary" type="button" @click="cancelDomainEdit">Cancel</button></form><template v-else><div><strong>{{ domain.label || 'Public domain' }}</strong><code>{{ domain.base_url }}</code></div><span :class="['tag', domain.is_active ? 'good-bg' : 'bad-bg']">{{ domain.is_active ? 'Active' : 'Disabled' }}</span><span v-if="domain.is_default" class="tag default-tag">Default</span><button v-else class="secondary" @click="updateDomain(domain, { is_default: true })">Make default</button><button class="secondary" @click="beginDomainEdit(domain)">Edit</button><button class="secondary" @click="updateDomain(domain, { is_active: !domain.is_active })">{{ domain.is_active ? 'Disable' : 'Enable' }}</button><button class="danger" @click="deleteDomain(domain)">Remove</button></template></div></div><p v-else class="domain-empty">No domains are configured.</p></section>
         </div>
         <div v-else class="workspace-loading">Loading administration data…</div>
       </section>

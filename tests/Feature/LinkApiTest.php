@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Link;
 use App\Models\ProxySession;
 use App\Support\LinkCredentials;
+use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -128,7 +129,8 @@ class LinkApiTest extends TestCase
         $this->getJson('/api/domains')
             ->assertOk()
             ->assertJsonPath('0.base_url', 'http://localhost')
-            ->assertJsonPath('0.id', null);
+            ->assertJsonPath('0.label', 'Main domain')
+            ->assertJsonPath('0.is_default', true);
 
         $domain = $this->withBasicAuth('operator', 'safe-password')
             ->postJson('/api/admin/domains', [
@@ -137,6 +139,16 @@ class LinkApiTest extends TestCase
             ])->assertCreated()
             ->assertJsonPath('base_url', 'https://go.example.com')
             ->json();
+
+        $this->getJson('/api/domains')
+            ->assertOk()
+            ->assertJsonPath('0.label', 'Main domain')
+            ->assertJsonPath('0.is_default', true);
+
+        $this->withBasicAuth('operator', 'safe-password')
+            ->patchJson('/api/admin/domains/'.$domain['id'], ['is_default' => true])
+            ->assertOk()
+            ->assertJsonPath('is_default', true);
 
         $this->getJson('/api/domains')
             ->assertOk()
@@ -275,10 +287,12 @@ class LinkApiTest extends TestCase
 
     public function test_upstream_cookies_are_saved_in_the_link_scoped_proxy_session(): void
     {
-        Http::fake(['*' => Http::response('signed in', 200, [
-            'Content-Type' => 'text/plain',
-            'Set-Cookie' => 'upstream_session=abc123; Path=/; HttpOnly',
-        ])]);
+        Http::fake(['*' => Http::sequence()
+            ->push('signed in', 200, [
+                'Content-Type' => 'text/plain',
+                'Set-Cookie' => 'upstream_session=abc123; Path=/; HttpOnly',
+            ])
+            ->push('profile', 200, ['Content-Type' => 'text/plain'])]);
         $link = Link::create([
             'token_id' => 'cookie-session-token',
             'secret_hash' => LinkCredentials::hash('secret'),
@@ -288,7 +302,7 @@ class LinkApiTest extends TestCase
             'expires_at' => now()->addDay(),
         ]);
 
-        $this->withCookie('ulink_proxy_visitor', str_repeat('B', 48))
+        $response = $this->withCookie('ulink_proxy_visitor', str_repeat('B', 48))
             ->withHeader('X-ULink-No-Screen', 'test')
             ->get('/'.$link->slug)
             ->assertOk();
@@ -296,5 +310,19 @@ class LinkApiTest extends TestCase
         $session = ProxySession::firstOrFail();
         $this->assertSame('upstream_session', $session->cookies[0]['Name']);
         $this->assertSame('abc123', $session->cookies[0]['Value']);
+
+        $browserName = 'ulink_up_'.$link->slug.'_'.rtrim(strtr(base64_encode('upstream_session'), '+/', '-_'), '=');
+        $response->assertPlainCookie($browserName, 'abc123');
+        $this->assertSame('/'.$link->slug, $response->getCookie($browserName, false)->getPath());
+
+        EncryptCookies::flushState();
+        $this->withCookie('ulink_proxy_visitor', str_repeat('B', 48))
+            ->withUnencryptedCookie($browserName, 'changed456')
+            ->withHeader('X-ULink-No-Screen', 'test')
+            ->get('/'.$link->slug.'/profile')
+            ->assertOk();
+
+        $sent = Http::recorded();
+        $this->assertStringContainsString('upstream_session=changed456', $sent[1][0]->header('Cookie')[0]);
     }
 }
