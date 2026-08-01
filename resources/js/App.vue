@@ -28,6 +28,8 @@ const adminData = ref(null);
 const adminAuthenticated = ref(false);
 const adminLinkDetails = ref(null);
 const selectedVisitDetails = ref(null);
+const regeneratedSecret = ref('');
+const requestFilters = ref({ method: '', path: '', status: '', sort: 'date', direction: 'desc' });
 const adminSection = ref(adminSectionFromPath());
 const adminSidebarOpen = ref(false);
 const publicDomains = ref([]);
@@ -115,15 +117,43 @@ const deleteLink = async (link) => {
   try { await api(`${apiBasePath}/admin/links/${link.id}`, { method: 'DELETE', headers: adminHeaders() }); await loadAdmin(); notice.value = 'Link deleted.'; }
   catch (e) { error.value = e.message; }
 };
-const openAdminLink = async (link, updateRoute = true) => {
+const openAdminLink = async (link, updateRoute = true, pageNumber = 1) => {
   busy.value = true;
   try {
-    adminLinkDetails.value = await api(`${apiBasePath}/admin/links/${link.id}`, { headers: adminHeaders() }); selectedVisitDetails.value = null; adminSection.value = 'link-detail';
+    if (adminLinkDetails.value?.id !== Number(link.id)) regeneratedSecret.value = '';
+    const params = new URLSearchParams({ page: String(pageNumber), ...Object.fromEntries(Object.entries(requestFilters.value).filter(([, value]) => value !== '')) });
+    adminLinkDetails.value = await api(`${apiBasePath}/admin/links/${link.id}?${params}`, { headers: adminHeaders() }); selectedVisitDetails.value = null; adminSection.value = 'link-detail';
     if (updateRoute) history.pushState({}, '', `${adminBasePath}/link/${link.id}`);
   }
   catch (e) { error.value = e.message; } finally { busy.value = false; }
 };
-const closeAdminLink = () => { adminLinkDetails.value = null; selectedVisitDetails.value = null; selectAdminSection('links'); };
+const applyRequestFilters = () => openAdminLink({ id: adminLinkDetails.value.id }, false, 1);
+const resetRequestFilters = () => {
+  requestFilters.value = { method: '', path: '', status: '', sort: 'date', direction: 'desc' };
+  applyRequestFilters();
+};
+const changeRequestPage = (pageNumber) => {
+  if (pageNumber < 1 || pageNumber > adminLinkDetails.value.requests.last_page) return;
+  openAdminLink({ id: adminLinkDetails.value.id }, false, pageNumber);
+};
+const toggleAdminLink = async () => {
+  const enabling = !adminLinkDetails.value.is_active;
+  if (!confirm(`${enabling ? 'Enable' : 'Disable'} this public link?`)) return;
+  try {
+    await api(`${apiBasePath}/admin/links/${adminLinkDetails.value.id}`, { method: 'PATCH', headers: adminHeaders(), body: JSON.stringify({ is_active: enabling }) });
+    adminLinkDetails.value.is_active = enabling;
+    notice.value = `Link ${enabling ? 'enabled' : 'disabled'}.`;
+  } catch (e) { error.value = e.message; }
+};
+const regenerateAdminSecret = async () => {
+  if (!confirm('Regenerate this secret? The previous secret will stop working immediately.')) return;
+  try {
+    const result = await api(`${apiBasePath}/admin/links/${adminLinkDetails.value.id}/regenerate-secret`, { method: 'POST', headers: adminHeaders() });
+    regeneratedSecret.value = result.secret_key;
+    notice.value = 'Secret regenerated. Copy it now; it will not be shown again.';
+  } catch (e) { error.value = e.message; }
+};
+const closeAdminLink = () => { adminLinkDetails.value = null; selectedVisitDetails.value = null; regeneratedSecret.value = ''; selectAdminSection('links'); };
 const addDomain = async () => {
   busy.value = true;
   try {
@@ -304,10 +334,14 @@ onMounted(() => {
       <section class="admin-detail-page" role="region" aria-labelledby="link-detail-title">
         <header class="detail-header"><div><span class="eyebrow">LINK DETAILS</span><h2 id="link-detail-title">{{ adminLinkDetails.public_url }}</h2></div><button class="secondary back-to-links" @click="closeAdminLink">← Back to links</button></header>
         <div class="detail-content">
-          <div class="detail-actions"><a :href="adminLinkDetails.public_url" target="_blank" class="primary">Open public link</a><button class="secondary" @click="copy(adminLinkDetails.public_url, 'Public URL copied.')">Copy URL</button></div>
-          <div class="detail-grid"><div><span>Destination</span><code>{{ adminLinkDetails.destination_url }}</code></div><div><span>Token ID</span><code>{{ adminLinkDetails.token_id }}</code></div><div><span>Delivery mode</span><strong>{{ adminLinkDetails.delivery_mode }}</strong></div><div><span>Status</span><strong :class="adminLinkDetails.expired ? 'bad' : 'good'">{{ adminLinkDetails.expired ? 'Expired' : 'Active' }}</strong></div><div><span>Created</span><strong>{{ new Date(adminLinkDetails.created_at).toLocaleString() }}</strong></div><div><span>Expires</span><strong>{{ new Date(adminLinkDetails.expire_at).toLocaleString() }}</strong></div></div>
+          <div class="detail-actions"><a :href="adminLinkDetails.public_url" target="_blank" class="primary">Open public link</a><button class="secondary" @click="copy(adminLinkDetails.public_url, 'Public URL copied.')">Copy URL</button><button :class="adminLinkDetails.is_active ? 'danger' : 'secondary'" @click="toggleAdminLink">{{ adminLinkDetails.is_active ? 'Disable link' : 'Enable link' }}</button><button class="secondary" @click="regenerateAdminSecret">Regenerate secret</button></div>
+          <div v-if="regeneratedSecret" class="regenerated-secret"><div><strong>New secret</strong><p>This is shown once. The previous secret is no longer valid.</p></div><code>{{ regeneratedSecret }}</code><button class="secondary" @click="copy(regeneratedSecret, 'Secret copied.')">Copy secret</button></div>
+          <div class="detail-grid"><div><span>Destination</span><code>{{ adminLinkDetails.destination_url }}</code></div><div><span>Token ID</span><code>{{ adminLinkDetails.token_id }}</code></div><div><span>Delivery mode</span><strong>{{ adminLinkDetails.delivery_mode }}</strong></div><div><span>Status</span><strong :class="!adminLinkDetails.is_active || adminLinkDetails.expired ? 'bad' : 'good'">{{ !adminLinkDetails.is_active ? 'Disabled' : adminLinkDetails.expired ? 'Expired' : 'Active' }}</strong></div><div><span>Created</span><strong>{{ new Date(adminLinkDetails.created_at).toLocaleString() }}</strong></div><div><span>Expires</span><strong>{{ new Date(adminLinkDetails.expire_at).toLocaleString() }}</strong></div></div>
           <div class="detail-stats"><div><span>Total hits</span><strong>{{ adminLinkDetails.hits.total }}</strong></div><div><span>Failed hits</span><strong>{{ adminLinkDetails.hits.failed }}</strong></div><div><span>Successful</span><strong>{{ adminLinkDetails.hits.total - adminLinkDetails.hits.failed }}</strong></div></div>
-          <div class="detail-visitors"><div class="table-head"><div><h3>Recent visitors</h3><p>Latest 100 requests and redirect attempts</p></div></div><div v-if="selectedVisitDetails" class="request-inspector"><header><div><strong>Request information</strong><span>{{ selectedVisitDetails.request_method }} {{ selectedVisitDetails.request_path }}</span></div><button @click="selectedVisitDetails = null">×</button></header><div class="request-info-grid"><div><span>Browser</span><strong>{{ selectedVisitDetails.browser }}</strong></div><div><span>Device</span><strong>{{ selectedVisitDetails.device }}</strong></div><div><span>Operating system</span><strong>{{ selectedVisitDetails.operating_system || 'Unknown' }}</strong></div><div><span>IP address</span><code>{{ selectedVisitDetails.ip }}</code></div><div><span>Language</span><code>{{ selectedVisitDetails.accept_language || 'Not provided' }}</code></div><div><span>Referrer</span><code>{{ selectedVisitDetails.referrer || 'Not provided' }}</code></div><div class="wide"><span>Full user agent</span><code>{{ selectedVisitDetails.user_agent || 'Not provided' }}</code></div><div class="wide"><span>Accept header</span><code>{{ selectedVisitDetails.accept || 'Not provided' }}</code></div></div><div v-if="Object.keys(selectedVisitDetails.client_hints || {}).length" class="client-hints"><span v-for="(value, name) in selectedVisitDetails.client_hints" :key="name"><b>{{ name.replaceAll('_', ' ') }}</b>{{ value }}</span></div><p class="privacy-safe">Cookies, authorization headers, and request bodies are intentionally never recorded.</p></div><div class="table-wrap"><table><thead><tr><th>IP address</th><th>Location</th><th>Browser</th><th>Device / OS</th><th>Time</th><th>Result</th><th></th></tr></thead><tbody><tr v-for="visit in adminLinkDetails.users" :key="visit.visited_at + visit.ip"><td><code>{{ visit.ip }}</code></td><td>{{ [visit.location.city, visit.location.region, visit.location.country].filter(Boolean).join(', ') || 'Unknown' }}</td><td>{{ visit.browser }}</td><td>{{ visit.device }}<small>{{ visit.operating_system || 'Unknown OS' }}</small></td><td>{{ new Date(visit.visited_at).toLocaleString() }}</td><td><span :class="['tag', visit.successful ? 'good-bg' : 'bad-bg']">{{ visit.successful ? 'Success' : visit.failure_reason || 'Failed' }}</span></td><td><button class="secondary inspect-button" @click="selectedVisitDetails = visit">Inspect</button></td></tr><tr v-if="!adminLinkDetails.users.length"><td colspan="7" class="empty">No visits recorded yet.</td></tr></tbody></table></div></div>
+          <div class="destination-history"><div class="table-head"><div><h3>Destination history</h3><p>Every temporary URL used by this link</p></div><span class="record-count">{{ adminLinkDetails.destination_history.length }} URLs</span></div><div class="history-list"><div v-for="destinationEntry in adminLinkDetails.destination_history" :key="destinationEntry.id"><span :class="['mode-dot', { current: destinationEntry.is_current }]"></span><code>{{ destinationEntry.url }}</code><span v-if="destinationEntry.is_current" class="tag good-bg">Current</span><time>{{ new Date(destinationEntry.created_at).toLocaleString() }}</time></div></div></div>
+          <div class="detail-visitors"><div class="table-head"><div><h3>Request history</h3><p>50 requests per page · {{ adminLinkDetails.requests.total }} matching requests</p></div></div>
+            <form class="request-filters" @submit.prevent="applyRequestFilters"><select v-model="requestFilters.method" aria-label="Request type"><option value="">All request types</option><option v-for="method in ['GET','POST','PUT','PATCH','DELETE','OPTIONS','HEAD']" :key="method" :value="method">{{ method }}</option></select><input v-model="requestFilters.path" placeholder="Filter by path" aria-label="Filter by path"><select v-model="requestFilters.status" aria-label="Request status"><option value="">All statuses</option><option value="success">Successful</option><option value="failed">Failed</option></select><select v-model="requestFilters.sort" aria-label="Sort field"><option value="date">Sort by date</option><option value="method">Sort by request type</option><option value="path">Sort by path</option><option value="status">Sort by status</option></select><select v-model="requestFilters.direction" aria-label="Sort direction"><option value="desc">Descending</option><option value="asc">Ascending</option></select><button class="primary" type="submit">Apply</button><button class="secondary" type="button" @click="resetRequestFilters">Reset</button></form>
+            <div v-if="selectedVisitDetails" class="request-inspector"><header><div><strong>Request information</strong><span>{{ selectedVisitDetails.request_method }} {{ selectedVisitDetails.request_path }}</span></div><button @click="selectedVisitDetails = null">×</button></header><div class="request-info-grid"><div><span>Browser</span><strong>{{ selectedVisitDetails.browser }}</strong></div><div><span>Device</span><strong>{{ selectedVisitDetails.device }}</strong></div><div><span>Operating system</span><strong>{{ selectedVisitDetails.operating_system || 'Unknown' }}</strong></div><div><span>IP address</span><code>{{ selectedVisitDetails.ip }}</code></div><div><span>Language</span><code>{{ selectedVisitDetails.accept_language || 'Not provided' }}</code></div><div><span>Referrer</span><code>{{ selectedVisitDetails.referrer || 'Not provided' }}</code></div><div class="wide"><span>Full user agent</span><code>{{ selectedVisitDetails.user_agent || 'Not provided' }}</code></div><div class="wide"><span>Accept header</span><code>{{ selectedVisitDetails.accept || 'Not provided' }}</code></div></div><div v-if="Object.keys(selectedVisitDetails.client_hints || {}).length" class="client-hints"><span v-for="(value, name) in selectedVisitDetails.client_hints" :key="name"><b>{{ name.replaceAll('_', ' ') }}</b>{{ value }}</span></div><p class="privacy-safe">Cookies, authorization headers, and request bodies are intentionally never recorded.</p></div><div class="table-wrap"><table><thead><tr><th>Type</th><th>Path</th><th>IP address</th><th>Browser</th><th>Device / OS</th><th>Time</th><th>Status</th><th></th></tr></thead><tbody><tr v-for="visit in adminLinkDetails.requests.data" :key="visit.id"><td><span class="request-method">{{ visit.request_method || '—' }}</span></td><td class="request-path"><code>{{ visit.request_path || '—' }}</code></td><td><code>{{ visit.ip }}</code><small>{{ [visit.location.city, visit.location.region, visit.location.country].filter(Boolean).join(', ') || 'Unknown location' }}</small></td><td>{{ visit.browser }}</td><td>{{ visit.device }}<small>{{ visit.operating_system || 'Unknown OS' }}</small></td><td>{{ new Date(visit.visited_at).toLocaleString() }}</td><td><span :class="['tag', visit.successful ? 'good-bg' : 'bad-bg']">{{ visit.successful ? 'Success' : visit.failure_reason || 'Failed' }}</span></td><td><button class="secondary inspect-button" @click="selectedVisitDetails = visit">Inspect</button></td></tr><tr v-if="!adminLinkDetails.requests.data.length"><td colspan="8" class="empty">No requests match these filters.</td></tr></tbody></table></div><div v-if="adminLinkDetails.requests.last_page > 1" class="pagination"><button class="secondary" :disabled="adminLinkDetails.requests.current_page === 1" @click="changeRequestPage(adminLinkDetails.requests.current_page - 1)">← Previous</button><span>Page {{ adminLinkDetails.requests.current_page }} of {{ adminLinkDetails.requests.last_page }}</span><button class="secondary" :disabled="adminLinkDetails.requests.current_page === adminLinkDetails.requests.last_page" @click="changeRequestPage(adminLinkDetails.requests.current_page + 1)">Next →</button></div></div>
         </div>
       </section>
     </div>

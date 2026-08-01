@@ -14,6 +14,8 @@ Route::prefix('admin')->middleware(['admin.env', 'throttle:60,1'])->group(functi
     Route::post('/login', [AdminController::class, 'login']);
     Route::get('/dashboard', [AdminController::class, 'dashboard']);
     Route::get('/links/{link}', [AdminController::class, 'showLink']);
+    Route::patch('/links/{link}', [AdminController::class, 'updateLink']);
+    Route::post('/links/{link}/regenerate-secret', [AdminController::class, 'regenerateSecret']);
     Route::delete('/links/{link}', [AdminController::class, 'destroy']);
     Route::post('/domains', [AdminController::class, 'storeDomain']);
     Route::patch('/domains/{domain}', [AdminController::class, 'updateDomain']);

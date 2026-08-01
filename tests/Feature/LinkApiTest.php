@@ -160,6 +160,91 @@ class LinkApiTest extends TestCase
             ->assertJsonMissing(['secret_key']);
     }
 
+    public function test_admin_request_history_is_filtered_sorted_and_paginated_by_fifty(): void
+    {
+        config(['ulink.admin_username' => 'operator', 'ulink.admin_password' => 'safe-password']);
+        $link = Link::create([
+            'token_id' => 'filtered-request-token',
+            'secret_hash' => LinkCredentials::hash('secret'),
+            'slug' => 'filter1234',
+            'destination_url' => 'https://example.com',
+            'delivery_mode' => 'redirect',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        foreach (range(1, 51) as $index) {
+            $link->visits()->create([
+                'request_method' => $index % 2 === 0 ? 'POST' : 'GET',
+                'request_path' => $index % 2 === 0 ? '/filter1234/api/login' : '/filter1234/home',
+                'successful' => $index % 4 !== 0,
+                'created_at' => now()->addSeconds($index),
+            ]);
+        }
+
+        $this->withBasicAuth('operator', 'safe-password')
+            ->getJson($this->apiBase.'/admin/links/'.$link->id)
+            ->assertOk()
+            ->assertJsonCount(50, 'requests.data')
+            ->assertJsonPath('requests.total', 51)
+            ->assertJsonPath('requests.last_page', 2);
+
+        $this->withBasicAuth('operator', 'safe-password')
+            ->getJson($this->apiBase.'/admin/links/'.$link->id.'?method=POST&path=api&status=failed&sort=path&direction=asc')
+            ->assertOk()
+            ->assertJsonPath('requests.total', 12)
+            ->assertJsonPath('requests.data.0.request_method', 'POST')
+            ->assertJsonPath('requests.data.0.request_path', '/filter1234/api/login')
+            ->assertJsonPath('requests.data.0.successful', false);
+    }
+
+    public function test_admin_can_disable_a_link_regenerate_its_secret_and_view_destination_history(): void
+    {
+        config(['ulink.admin_username' => 'operator', 'ulink.admin_password' => 'safe-password']);
+        $created = $this->postJson($this->apiBase.'/links', [
+            'url' => 'https://first.example.com',
+            'expire_at' => now()->addMonth()->toIso8601String(),
+        ])->assertCreated()->json();
+        $link = Link::where('token_id', $created['token_id'])->firstOrFail();
+
+        $this->putJson($this->apiBase.'/links', [
+            'token_id' => $link->token_id,
+            'secret_key' => $created['secret_key'],
+            'url' => 'https://second.example.com',
+        ])->assertOk();
+
+        $details = $this->withBasicAuth('operator', 'safe-password')
+            ->getJson($this->apiBase.'/admin/links/'.$link->id)
+            ->assertOk()
+            ->assertJsonCount(2, 'destination_history')
+            ->assertJsonPath('destination_history.0.url', 'https://second.example.com')
+            ->assertJsonPath('destination_history.1.url', 'https://first.example.com');
+
+        $newSecret = $this->withBasicAuth('operator', 'safe-password')
+            ->postJson($this->apiBase.'/admin/links/'.$link->id.'/regenerate-secret')
+            ->assertOk()
+            ->assertJsonStructure(['token_id', 'secret_key'])
+            ->json('secret_key');
+
+        $this->withHeader('Authorization', 'Bearer '.$link->token_id.':'.$created['secret_key'])
+            ->getJson($this->apiBase.'/links/'.$link->token_id)
+            ->assertUnauthorized();
+        $this->withHeader('Authorization', 'Bearer '.$link->token_id.':'.$newSecret)
+            ->getJson($this->apiBase.'/links/'.$link->token_id)
+            ->assertOk();
+
+        $this->withBasicAuth('operator', 'safe-password')
+            ->patchJson($this->apiBase.'/admin/links/'.$link->id, ['is_active' => false])
+            ->assertOk()
+            ->assertJsonPath('is_active', false);
+
+        $this->withHeaders(['Accept' => 'application/json', 'User-Agent' => 'curl/8.0'])
+            ->get('/'.$link->slug)
+            ->assertGone();
+
+        $this->assertFalse($link->fresh()->is_active);
+        $this->assertNotEmpty($details->json('destination_history'));
+    }
+
     public function test_admin_can_configure_a_public_domain_and_user_can_select_it(): void
     {
         config(['ulink.admin_username' => 'operator', 'ulink.admin_password' => 'safe-password']);

@@ -6,9 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\Link;
 use App\Models\LinkVisit;
 use App\Models\PublicDomain;
+use App\Support\LinkCredentials;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class AdminController extends Controller
@@ -31,7 +34,8 @@ class AdminController extends Controller
         return response()->json([
             'stats' => [
                 'total_links' => Link::count(),
-                'active_links' => Link::where('expires_at', '>', now())->count(),
+                'active_links' => Link::where('is_active', true)->where('expires_at', '>', now())->count(),
+                'disabled_links' => Link::where('is_active', false)->count(),
                 'expired_links' => Link::where('expires_at', '<=', now())->count(),
                 'total_hits' => LinkVisit::count(),
                 'failed_hits' => LinkVisit::where('successful', false)->count(),
@@ -42,6 +46,7 @@ class AdminController extends Controller
                 'public_url' => $link->publicUrl(),
                 'destination_url' => $link->destination_url,
                 'delivery_mode' => $link->delivery_mode,
+                'is_active' => $link->is_active,
                 'total_hits' => $link->total_hits,
                 'failed_hits' => $link->failed_hits,
                 'expire_at' => $link->expires_at->toIso8601String(),
@@ -58,11 +63,59 @@ class AdminController extends Controller
         return response()->json(['deleted' => true]);
     }
 
-    public function showLink(Link $link): JsonResponse
+    public function showLink(Request $request, Link $link): JsonResponse
     {
+        $filters = $request->validate([
+            'method' => ['nullable', 'string', 'max:12'],
+            'path' => ['nullable', 'string', 'max:500'],
+            'status' => ['nullable', Rule::in(['success', 'failed'])],
+            'sort' => ['nullable', Rule::in(['date', 'method', 'path', 'status'])],
+            'direction' => ['nullable', Rule::in(['asc', 'desc'])],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+
         $link->loadCount([
             'visits as total_hits',
             'visits as failed_hits' => fn ($query) => $query->where('successful', false),
+        ]);
+
+        $sortColumns = [
+            'date' => 'created_at',
+            'method' => 'request_method',
+            'path' => 'request_path',
+            'status' => 'successful',
+        ];
+        $visits = $link->visits()
+            ->when($filters['method'] ?? null, fn ($query, $method) => $query->where('request_method', strtoupper($method)))
+            ->when($filters['path'] ?? null, fn ($query, $path) => $query->where('request_path', 'like', '%'.$path.'%'))
+            ->when(($filters['status'] ?? null) === 'success', fn ($query) => $query->where('successful', true))
+            ->when(($filters['status'] ?? null) === 'failed', fn ($query) => $query->where('successful', false))
+            ->orderBy($sortColumns[$filters['sort'] ?? 'date'], $filters['direction'] ?? 'desc')
+            ->orderByDesc('id')
+            ->paginate(50)
+            ->withQueryString();
+
+        $visits->through(fn ($visit) => [
+            'id' => $visit->id,
+            'ip' => $visit->ip_address,
+            'location' => array_filter([
+                'country' => $visit->country,
+                'region' => $visit->region,
+                'city' => $visit->city,
+            ]),
+            'browser' => $visit->browser,
+            'device' => $visit->device,
+            'operating_system' => $visit->operating_system,
+            'user_agent' => $visit->user_agent,
+            'request_method' => $visit->request_method,
+            'request_path' => $visit->request_path,
+            'referrer' => $visit->referrer,
+            'accept_language' => $visit->accept_language,
+            'accept' => $visit->accept_header,
+            'client_hints' => $visit->client_hints ?: [],
+            'successful' => $visit->successful,
+            'failure_reason' => $visit->failure_reason,
+            'visited_at' => $visit->created_at?->toIso8601String(),
         ]);
 
         return response()->json([
@@ -71,32 +124,43 @@ class AdminController extends Controller
             'public_url' => $link->publicUrl(),
             'destination_url' => $link->destination_url,
             'delivery_mode' => $link->delivery_mode,
+            'is_active' => $link->is_active,
             'hits' => ['total' => $link->total_hits, 'failed' => $link->failed_hits],
             'expire_at' => $link->expires_at->toIso8601String(),
             'expired' => $link->expires_at->isPast(),
             'created_at' => $link->created_at->toIso8601String(),
             'updated_at' => $link->updated_at->toIso8601String(),
-            'users' => $link->visits()->latest('created_at')->limit(100)->get()->map(fn ($visit) => [
-                'ip' => $visit->ip_address,
-                'location' => array_filter([
-                    'country' => $visit->country,
-                    'region' => $visit->region,
-                    'city' => $visit->city,
-                ]),
-                'browser' => $visit->browser,
-                'device' => $visit->device,
-                'operating_system' => $visit->operating_system,
-                'user_agent' => $visit->user_agent,
-                'request_method' => $visit->request_method,
-                'request_path' => $visit->request_path,
-                'referrer' => $visit->referrer,
-                'accept_language' => $visit->accept_language,
-                'accept' => $visit->accept_header,
-                'client_hints' => $visit->client_hints ?: [],
-                'successful' => $visit->successful,
-                'failure_reason' => $visit->failure_reason,
-                'visited_at' => $visit->created_at?->toIso8601String(),
+            'users' => $visits->items(),
+            'requests' => $visits,
+            'destination_history' => $link->destinations()->latest('created_at')->latest('id')->get()->map(fn ($destination, $index) => [
+                'id' => $destination->id,
+                'url' => $destination->url,
+                'created_at' => $destination->created_at?->toIso8601String(),
+                'is_current' => $index === 0,
             ]),
+        ]);
+    }
+
+    public function updateLink(Request $request, Link $link): JsonResponse
+    {
+        $data = $request->validate(['is_active' => ['required', 'boolean']]);
+        $link->update($data);
+
+        return response()->json([
+            'id' => $link->id,
+            'is_active' => $link->is_active,
+            'message' => $link->is_active ? 'Link enabled.' : 'Link disabled.',
+        ]);
+    }
+
+    public function regenerateSecret(Link $link): JsonResponse
+    {
+        $secret = Str::random(48);
+        $link->update(['secret_hash' => LinkCredentials::hash($secret)]);
+
+        return response()->json([
+            'token_id' => $link->token_id,
+            'secret_key' => $secret,
         ]);
     }
 

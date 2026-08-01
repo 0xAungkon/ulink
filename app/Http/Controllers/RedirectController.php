@@ -44,6 +44,12 @@ class RedirectController extends Controller
 
     private function handle(Request $request, Link $link, ?string $proxyPath): RedirectResponse|Response
     {
+        if (! $link->is_active) {
+            $this->recordVisit($link, $request, false, 'disabled');
+
+            return response()->view('expired', ['link' => $link, 'disabled' => true], 410);
+        }
+
         if ($link->expires_at->isPast()) {
             $this->recordVisit($link, $request, false, 'expired');
 

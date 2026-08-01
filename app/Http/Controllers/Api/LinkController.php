@@ -69,6 +69,7 @@ class LinkController extends Controller
             'delivery_mode' => ($data['type'] ?? 'redirect') === 'proxy' ? 'proxy' : 'redirect',
             'expires_at' => $expiresAt,
         ]);
+        $link->destinations()->create(['url' => $link->destination_url, 'created_at' => now()]);
 
         return response()->json([
             'token_id' => $link->token_id,
@@ -92,8 +93,12 @@ class LinkController extends Controller
         $secret = (string) ($data['secret_key'] ?? $data['secreat_key'] ?? '');
         abort_unless(LinkCredentials::valid($link, $secret), 401, 'Invalid link credentials.');
         abort_if($link->expires_at->isPast(), 410, 'This link has expired.');
+        abort_unless($link->is_active, 410, 'This link has been disabled.');
 
-        $link->update(['destination_url' => $data['url']]);
+        if ($link->destination_url !== $data['url']) {
+            $link->update(['destination_url' => $data['url']]);
+            $link->destinations()->create(['url' => $data['url'], 'created_at' => now()]);
+        }
 
         return response()->json([
             'url' => $link->publicUrl(),
