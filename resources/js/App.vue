@@ -17,6 +17,8 @@ const adminPassword = ref('');
 const adminData = ref(null);
 const adminAuthenticated = ref(false);
 const adminLinkDetails = ref(null);
+const adminSection = ref('dashboard');
+const adminSidebarOpen = ref(false);
 const publicDomains = ref([]);
 const selectedDomainId = ref(null);
 const deliveryMode = ref('redirect');
@@ -127,7 +129,15 @@ const adminLogout = () => {
   adminAuthenticated.value = false; adminData.value = null;
   adminUser.value = ''; adminPassword.value = '';
   adminLinkDetails.value = null;
+  adminSection.value = 'dashboard';
 };
+
+const adminSectionMeta = computed(() => ({
+  dashboard: { title: 'Dashboard', subtitle: 'Service health and activity at a glance.' },
+  links: { title: 'Links', subtitle: 'Review and manage every anonymous ULink.' },
+  domains: { title: 'Domains', subtitle: 'Configure public domains available during link creation.' },
+}[adminSection.value]));
+const selectAdminSection = (section) => { adminSection.value = section; adminSidebarOpen.value = false; };
 
 const expiryLabel = computed(() => created.value ? new Date(created.value.expire_at).toLocaleDateString(undefined, { dateStyle: 'long' }) : '');
 
@@ -148,8 +158,8 @@ onMounted(() => {
       <nav><button :class="{ active: page === 'home' }" @click="go('home')">Create link</button><button :class="{ active: page === 'manage' }" @click="go('manage')">Manage link</button></nav>
       <span class="status"><i></i> Service online</span>
     </header>
-    <header v-else class="admin-nav">
-      <div class="wrap admin-nav-inner"><div class="admin-brand"><span class="brand-mark">U</span><div><strong>ULink</strong><small>Administration portal</small></div></div><div class="admin-actions"><button class="secondary" @click="go('home')">View public portal</button><button v-if="adminAuthenticated" class="logout" @click="adminLogout">Sign out</button></div></div>
+    <header v-else-if="!adminAuthenticated" class="admin-nav">
+      <div class="wrap admin-nav-inner"><div class="admin-brand"><span class="brand-mark">U</span><div><strong>ULink</strong><small>Administration portal</small></div></div><div class="admin-actions"><button class="secondary" @click="go('home')">View public portal</button></div></div>
     </header>
 
     <main v-if="page === 'home'" class="wrap hero-grid">
@@ -206,28 +216,42 @@ onMounted(() => {
       </template>
     </main>
 
-    <main v-else class="wrap page admin-page">
-      <div class="page-title admin-title"><div class="eyebrow">SECURE OPERATIONS</div><h1>{{ adminAuthenticated ? 'Dashboard' : 'Welcome back' }}</h1><p>{{ adminAuthenticated ? 'Manage public domains, links, and service activity.' : 'Sign in with the administrator credentials configured on the server.' }}</p></div>
-      <section v-if="!adminAuthenticated" class="card login-card"><div class="login-icon">⌁</div><h2>Admin sign in</h2><p>Enter your secure environment credentials to continue.</p><form @submit.prevent="loadAdmin"><label>Username</label><input v-model="adminUser" autocomplete="username" required placeholder="Administrator username"><label>Password</label><input v-model="adminPassword" type="password" autocomplete="current-password" required placeholder="Administrator password"><button class="primary" :disabled="busy">{{ busy ? 'Signing in…' : 'Sign in securely' }}</button></form><small class="security-note">Credentials are transmitted only to this server and are not stored in the database.</small></section>
-      <template v-else-if="adminData">
-        <section class="stats admin-stats"><div><span>Total links</span><strong>{{ adminData.stats.total_links }}</strong></div><div><span>Active</span><strong>{{ adminData.stats.active_links }}</strong></div><div><span>Expired</span><strong>{{ adminData.stats.expired_links }}</strong></div><div><span>Total hits</span><strong>{{ adminData.stats.total_hits }}</strong></div><div><span>Failed hits</span><strong>{{ adminData.stats.failed_hits }}</strong></div></section>
-        <section class="card domains-card">
-          <div class="table-head"><div><h2>Public domains</h2><p>Choose which domains and subdomains appear during link creation.</p></div></div>
-          <form class="domain-form" @submit.prevent="addDomain"><input v-model="newDomainLabel" placeholder="Label (optional)"><input v-model="newDomainUrl" required placeholder="https://go.example.com"><button class="primary" :disabled="busy">Add domain</button></form>
-          <div v-if="adminData.domains.length" class="domain-list">
-            <div v-for="domain in adminData.domains" :key="domain.id" class="domain-item">
-              <div><strong>{{ domain.label || 'Public domain' }}</strong><code>{{ domain.base_url }}</code></div>
-              <span :class="['tag', domain.is_active ? 'good-bg' : 'bad-bg']">{{ domain.is_active ? 'Active' : 'Disabled' }}</span>
-              <span v-if="domain.is_default" class="tag default-tag">Default</span>
-              <button v-else class="secondary" @click="updateDomain(domain, { is_default: true })">Make default</button>
-              <button class="secondary" @click="updateDomain(domain, { is_active: !domain.is_active })">{{ domain.is_active ? 'Disable' : 'Enable' }}</button>
-              <button class="danger" @click="deleteDomain(domain)">Remove</button>
-            </div>
-          </div>
-          <p v-else class="domain-empty">No custom domains configured. New links currently use the main APP_URL domain.</p>
-        </section>
-        <section class="card"><div class="table-head"><div><h2>All links</h2><p>Newest anonymous links first</p></div><button class="secondary" @click="loadAdmin">Refresh</button></div><div class="table-wrap"><table><thead><tr><th>Public link</th><th>Destination</th><th>Mode</th><th>Hits</th><th>Expires</th><th></th></tr></thead><tbody><tr v-for="link in adminData.links.data" :key="link.id"><td><a :href="link.public_url" target="_blank">{{ link.public_url }}</a><small>{{ link.token_id }}</small></td><td class="truncate">{{ link.destination_url }}</td><td><span class="tag default-tag">{{ link.delivery_mode }}</span></td><td>{{ link.total_hits }} <small>({{ link.failed_hits }} failed)</small></td><td>{{ new Date(link.expire_at).toLocaleDateString() }}</td><td><div class="row-actions"><button class="secondary" @click="openAdminLink(link)">View</button><button class="danger" @click="deleteLink(link)">Delete</button></div></td></tr></tbody></table></div></section>
-      </template>
+    <main v-else-if="!adminAuthenticated" class="wrap page admin-page">
+      <div class="page-title admin-title"><div class="eyebrow">SECURE OPERATIONS</div><h1>Welcome back</h1><p>Sign in with the administrator credentials configured on the server.</p></div>
+      <section class="card login-card"><div class="login-icon">⌁</div><h2>Admin sign in</h2><p>Enter your secure environment credentials to continue.</p><form @submit.prevent="loadAdmin"><label>Username</label><input v-model="adminUser" autocomplete="username" required placeholder="Administrator username"><label>Password</label><input v-model="adminPassword" type="password" autocomplete="current-password" required placeholder="Administrator password"><button class="primary" :disabled="busy">{{ busy ? 'Signing in…' : 'Sign in securely' }}</button></form><small class="security-note">Credentials are transmitted only to this server and are not stored in the database.</small></section>
+    </main>
+
+    <main v-else class="admin-portal">
+      <div v-if="adminSidebarOpen" class="sidebar-scrim" @click="adminSidebarOpen = false"></div>
+      <aside :class="['admin-sidebar', { open: adminSidebarOpen }]">
+        <div class="sidebar-brand"><span class="brand-mark">U</span><div><strong>ULink</strong><small>Admin console</small></div></div>
+        <div class="sidebar-label">Workspace</div>
+        <nav class="sidebar-nav">
+          <button :class="{ active: adminSection === 'dashboard' }" @click="selectAdminSection('dashboard')"><span>⌂</span><div>Dashboard<small>Overview and activity</small></div></button>
+          <button :class="{ active: adminSection === 'links' }" @click="selectAdminSection('links')"><span>↗</span><div>Links<small>Manage all ULinks</small></div><b>{{ adminData?.stats.total_links || 0 }}</b></button>
+          <button :class="{ active: adminSection === 'domains' }" @click="selectAdminSection('domains')"><span>◎</span><div>Domains<small>Public URL origins</small></div><b>{{ adminData?.domains.length || 0 }}</b></button>
+        </nav>
+        <div class="sidebar-footer"><div class="admin-identity"><span>{{ adminUser.slice(0, 1).toUpperCase() }}</span><div><strong>{{ adminUser }}</strong><small>Administrator</small></div></div><button @click="go('home')">↗ <span>View public portal</span></button><button class="sidebar-logout" @click="adminLogout">⇥ <span>Sign out</span></button></div>
+      </aside>
+
+      <section class="admin-workspace">
+        <header class="workspace-header"><button class="sidebar-toggle" aria-label="Open navigation" @click="adminSidebarOpen = true">☰</button><div><div class="workspace-kicker">Administration / {{ adminSectionMeta.title }}</div><h1>{{ adminSectionMeta.title }}</h1><p>{{ adminSectionMeta.subtitle }}</p></div><div class="workspace-actions"><span class="status"><i></i> Service online</span><button class="secondary" :disabled="busy" @click="loadAdmin">{{ busy ? 'Refreshing…' : 'Refresh data' }}</button></div></header>
+
+        <div v-if="adminData" class="workspace-content">
+          <template v-if="adminSection === 'dashboard'">
+            <section class="stats admin-stats"><div><span>Total links</span><strong>{{ adminData.stats.total_links }}</strong><small>{{ adminData.stats.active_links }} currently active</small></div><div><span>Active</span><strong class="good">{{ adminData.stats.active_links }}</strong><small>Available to visitors</small></div><div><span>Expired</span><strong>{{ adminData.stats.expired_links }}</strong><small>Past expiration date</small></div><div><span>Total requests</span><strong>{{ adminData.stats.total_hits }}</strong><small>Across every link</small></div><div><span>Failed requests</span><strong :class="{ bad: adminData.stats.failed_hits }">{{ adminData.stats.failed_hits }}</strong><small>Requires attention</small></div></section>
+            <section class="admin-overview-grid">
+              <div class="card overview-card"><div class="table-head"><div><h2>Recent links</h2><p>Latest links created on the service</p></div><button class="text-action" @click="selectAdminSection('links')">View all →</button></div><div class="recent-list"><button v-for="link in adminData.links.data.slice(0, 5)" :key="link.id" @click="openAdminLink(link)"><span :class="['mode-dot', link.delivery_mode]"></span><div><strong>{{ link.public_url }}</strong><small>{{ link.destination_url }}</small></div><span>{{ link.total_hits }} hits</span><b>›</b></button><p v-if="!adminData.links.data.length" class="domain-empty">No links created yet.</p></div></div>
+              <div class="card overview-card domain-summary"><div class="table-head"><div><h2>Domain status</h2><p>Configured public origins</p></div><button class="text-action" @click="selectAdminSection('domains')">Manage →</button></div><div class="summary-number">{{ adminData.domains.filter(domain => domain.is_active).length }}<span> active</span></div><div class="summary-track"><i :style="{ width: `${adminData.domains.length ? (adminData.domains.filter(domain => domain.is_active).length / adminData.domains.length) * 100 : 0}%` }"></i></div><p>{{ adminData.domains.length }} configured domain{{ adminData.domains.length === 1 ? '' : 's' }} in total.</p></div>
+            </section>
+          </template>
+
+          <section v-else-if="adminSection === 'links'" class="card admin-table-card"><div class="table-head"><div><h2>All links</h2><p>Inspect traffic, destinations, and delivery modes.</p></div><span class="record-count">{{ adminData.links.total }} records</span></div><div class="table-wrap"><table><thead><tr><th>Public link</th><th>Destination</th><th>Mode</th><th>Hits</th><th>Expires</th><th></th></tr></thead><tbody><tr v-for="link in adminData.links.data" :key="link.id"><td><a :href="link.public_url" target="_blank">{{ link.public_url }}</a><small>{{ link.token_id }}</small></td><td class="truncate">{{ link.destination_url }}</td><td><span class="tag default-tag">{{ link.delivery_mode }}</span></td><td>{{ link.total_hits }} <small>{{ link.failed_hits }} failed</small></td><td>{{ new Date(link.expire_at).toLocaleDateString() }}</td><td><div class="row-actions"><button class="secondary" @click="openAdminLink(link)">View</button><button class="danger" @click="deleteLink(link)">Delete</button></div></td></tr></tbody></table></div></section>
+
+          <section v-else class="card domains-card"><div class="table-head"><div><h2>Public domains</h2><p>Choose which domains and subdomains appear during link creation.</p></div><span class="record-count">{{ adminData.domains.length }} configured</span></div><form class="domain-form" @submit.prevent="addDomain"><input v-model="newDomainLabel" placeholder="Label (optional)"><input v-model="newDomainUrl" required placeholder="https://go.example.com"><button class="primary" :disabled="busy">Add domain</button></form><div v-if="adminData.domains.length" class="domain-list"><div v-for="domain in adminData.domains" :key="domain.id" class="domain-item"><div><strong>{{ domain.label || 'Public domain' }}</strong><code>{{ domain.base_url }}</code></div><span :class="['tag', domain.is_active ? 'good-bg' : 'bad-bg']">{{ domain.is_active ? 'Active' : 'Disabled' }}</span><span v-if="domain.is_default" class="tag default-tag">Default</span><button v-else class="secondary" @click="updateDomain(domain, { is_default: true })">Make default</button><button class="secondary" @click="updateDomain(domain, { is_active: !domain.is_active })">{{ domain.is_active ? 'Disable' : 'Enable' }}</button><button class="danger" @click="deleteDomain(domain)">Remove</button></div></div><p v-else class="domain-empty">No custom domains configured. New links currently use the main APP_URL domain.</p></section>
+        </div>
+        <div v-else class="workspace-loading">Loading administration data…</div>
+      </section>
     </main>
 
     <div v-if="adminLinkDetails" class="modal-backdrop" @click.self="adminLinkDetails = null">
