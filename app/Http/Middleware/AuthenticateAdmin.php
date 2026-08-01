@@ -16,9 +16,7 @@ class AuthenticateAdmin
             && hash_equals((string) config('ulink.admin_password'), $password);
 
         if (! $valid) {
-            return response()->json(['message' => 'Invalid administrator credentials.'], 401, [
-                'WWW-Authenticate' => 'Basic realm="ULink Admin"',
-            ]);
+            return response()->json(['message' => 'Invalid administrator credentials.'], 401);
         }
 
         return $next($request);

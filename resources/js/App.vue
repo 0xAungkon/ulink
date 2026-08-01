@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 
-const page = ref(location.pathname === '/admin' ? 'admin' : location.pathname === '/manage' ? 'manage' : 'home');
+const page = ref(location.pathname.startsWith('/admin') ? 'admin' : location.pathname === '/manage' ? 'manage' : 'home');
 const busy = ref(false);
 const error = ref('');
 const notice = ref('');
@@ -18,7 +18,7 @@ const adminData = ref(null);
 const adminAuthenticated = ref(false);
 const adminLinkDetails = ref(null);
 const selectedVisitDetails = ref(null);
-const adminSection = ref('dashboard');
+const adminSection = ref(location.pathname === '/admin/domains' ? 'domains' : location.pathname.startsWith('/admin/link/') ? 'link-detail' : location.pathname === '/admin/links' ? 'links' : 'dashboard');
 const adminSidebarOpen = ref(false);
 const publicDomains = ref([]);
 const selectedDomainId = ref(null);
@@ -95,6 +95,9 @@ const loadAdmin = async () => {
     adminData.value = await api('/api/admin/dashboard', { headers: adminHeaders() });
     adminAuthenticated.value = true;
     sessionStorage.setItem('ulink_admin', JSON.stringify({ user: adminUser.value, password: adminPassword.value }));
+    if (location.pathname === '/admin') history.replaceState({}, '', '/admin/dashboard');
+    const routeLinkId = location.pathname.match(/^\/admin\/link\/(\d+)$/)?.[1];
+    if (routeLinkId) await openAdminLink({ id: routeLinkId }, false);
   } catch (e) { error.value = e.message; adminAuthenticated.value = false; } finally { busy.value = false; }
 };
 const deleteLink = async (link) => {
@@ -102,12 +105,15 @@ const deleteLink = async (link) => {
   try { await api(`/api/admin/links/${link.id}`, { method: 'DELETE', headers: adminHeaders() }); await loadAdmin(); notice.value = 'Link deleted.'; }
   catch (e) { error.value = e.message; }
 };
-const openAdminLink = async (link) => {
+const openAdminLink = async (link, updateRoute = true) => {
   busy.value = true;
-  try { adminLinkDetails.value = await api(`/api/admin/links/${link.id}`, { headers: adminHeaders() }); selectedVisitDetails.value = null; }
+  try {
+    adminLinkDetails.value = await api(`/api/admin/links/${link.id}`, { headers: adminHeaders() }); selectedVisitDetails.value = null; adminSection.value = 'link-detail';
+    if (updateRoute) history.pushState({}, '', `/admin/link/${link.id}`);
+  }
   catch (e) { error.value = e.message; } finally { busy.value = false; }
 };
-const closeAdminLink = () => { adminLinkDetails.value = null; selectedVisitDetails.value = null; };
+const closeAdminLink = () => { adminLinkDetails.value = null; selectedVisitDetails.value = null; selectAdminSection('links'); };
 const addDomain = async () => {
   busy.value = true;
   try {
@@ -151,8 +157,22 @@ const adminSectionMeta = computed(() => ({
   dashboard: { title: 'Dashboard', subtitle: 'Service health and activity at a glance.' },
   links: { title: 'Links', subtitle: 'Review and manage every anonymous ULink.' },
   domains: { title: 'Domains', subtitle: 'Configure public domains available during link creation.' },
+  'link-detail': { title: 'Link details', subtitle: 'Request history, destination, and visitor information.' },
 }[adminSection.value]));
-const selectAdminSection = (section) => { adminSection.value = section; adminSidebarOpen.value = false; };
+const selectAdminSection = (section, updateRoute = true) => {
+  adminSection.value = section; adminSidebarOpen.value = false;
+  if (section !== 'link-detail') adminLinkDetails.value = null;
+  if (updateRoute) history.pushState({}, '', `/admin/${section}`);
+};
+
+const syncRoute = () => {
+  page.value = location.pathname.startsWith('/admin') ? 'admin' : location.pathname === '/manage' ? 'manage' : 'home';
+  if (page.value !== 'admin') return;
+  const linkId = location.pathname.match(/^\/admin\/link\/(\d+)$/)?.[1];
+  if (linkId) { adminSection.value = 'link-detail'; if (adminAuthenticated.value) openAdminLink({ id: linkId }, false); return; }
+  adminLinkDetails.value = null;
+  adminSection.value = location.pathname === '/admin/domains' ? 'domains' : location.pathname === '/admin/links' ? 'links' : 'dashboard';
+};
 
 const expiryLabel = computed(() => created.value ? new Date(created.value.expire_at).toLocaleDateString(undefined, { dateStyle: 'long' }) : '');
 
@@ -162,7 +182,7 @@ onMounted(() => {
   if (saved) { tokenId.value = saved.token_id; secretKey.value = saved.secret_key; }
   const admin = JSON.parse(sessionStorage.getItem('ulink_admin') || 'null');
   if (admin) { adminUser.value = admin.user; adminPassword.value = admin.password; if (page.value === 'admin') loadAdmin(); }
-  addEventListener('popstate', () => page.value = location.pathname === '/admin' ? 'admin' : location.pathname === '/manage' ? 'manage' : 'home');
+  addEventListener('popstate', syncRoute);
 });
 </script>
 
@@ -243,7 +263,7 @@ onMounted(() => {
         <div class="sidebar-label">Workspace</div>
         <nav class="sidebar-nav">
           <button :class="{ active: adminSection === 'dashboard' }" @click="selectAdminSection('dashboard')"><span>⌂</span><div>Dashboard<small>Overview and activity</small></div></button>
-          <button :class="{ active: adminSection === 'links' }" @click="selectAdminSection('links')"><span>↗</span><div>Links<small>Manage all ULinks</small></div><b>{{ adminData?.stats.total_links || 0 }}</b></button>
+          <button :class="{ active: adminSection === 'links' || adminSection === 'link-detail' }" @click="selectAdminSection('links')"><span>↗</span><div>Links<small>Manage all ULinks</small></div><b>{{ adminData?.stats.total_links || 0 }}</b></button>
           <button :class="{ active: adminSection === 'domains' }" @click="selectAdminSection('domains')"><span>◎</span><div>Domains<small>Public URL origins</small></div><b>{{ adminData?.domains.length || 0 }}</b></button>
         </nav>
         <div class="sidebar-footer"><div class="admin-identity"><span>{{ adminUser.slice(0, 1).toUpperCase() }}</span><div><strong>{{ adminUser }}</strong><small>Administrator</small></div></div><button @click="go('home')">↗ <span>View public portal</span></button><button class="sidebar-logout" @click="adminLogout">⇥ <span>Sign out</span></button></div>

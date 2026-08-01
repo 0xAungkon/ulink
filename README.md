@@ -106,6 +106,8 @@ Admin endpoints use HTTP Basic authentication with the `.env` credentials:
 
 The browser admin UI is available at `/admin`.
 
+Admin workspaces have dedicated browser routes: `/admin/dashboard`, `/admin/links`, `/admin/link/{id}`, and `/admin/domains`. Invalid administrator credentials return an in-form JSON error without sending an HTTP Basic challenge that would trigger a native browser login dialog.
+
 ## Testing
 
 ```bash

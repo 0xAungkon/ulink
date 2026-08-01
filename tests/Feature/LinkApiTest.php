@@ -88,11 +88,22 @@ class LinkApiTest extends TestCase
     {
         config(['ulink.admin_username' => 'operator', 'ulink.admin_password' => 'safe-password']);
 
-        $this->getJson('/api/admin/dashboard')->assertUnauthorized();
+        $this->getJson('/api/admin/dashboard')
+            ->assertUnauthorized()
+            ->assertHeaderMissing('WWW-Authenticate')
+            ->assertJsonPath('message', 'Invalid administrator credentials.');
         $this->withBasicAuth('operator', 'safe-password')
             ->getJson('/api/admin/dashboard')
             ->assertOk()
             ->assertJsonStructure(['stats', 'links']);
+    }
+
+    public function test_admin_portal_sections_have_dedicated_routes(): void
+    {
+        $this->get('/admin/dashboard')->assertOk();
+        $this->get('/admin/links')->assertOk();
+        $this->get('/admin/link/123')->assertOk();
+        $this->get('/admin/domains')->assertOk();
     }
 
     public function test_admin_can_view_complete_link_details_without_link_secret(): void
